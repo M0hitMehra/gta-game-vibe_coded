@@ -1,0 +1,401 @@
+
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--gap:12px;--r:var(--border-radius-md);--rl:var(--border-radius-lg)}
+body{font-family:var(--font-sans)}
+.wrap{padding:1rem 0}
+.header{margin-bottom:1.5rem}
+.header h1{font-size:20px;font-weight:500;color:var(--color-text-primary)}
+.header p{font-size:13px;color:var(--color-text-secondary);margin-top:4px}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:1.25rem}
+.tab{font-size:12px;font-weight:500;padding:5px 12px;border-radius:99px;border:0.5px solid var(--color-border-secondary);background:transparent;color:var(--color-text-secondary);cursor:pointer;transition:all .15s}
+.tab:hover{background:var(--color-background-secondary)}
+.tab.active{background:var(--color-background-secondary);border-color:var(--color-border-primary);color:var(--color-text-primary)}
+.panel{display:none}.panel.active{display:block}
+.card{background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--rl);padding:1rem 1.25rem;margin-bottom:var(--gap)}
+.card-title{font-size:14px;font-weight:500;color:var(--color-text-primary);margin-bottom:4px}
+.card-sub{font-size:12px;color:var(--color-text-secondary);margin-bottom:12px;line-height:1.5}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:var(--gap)}
+.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:var(--gap)}
+@media(max-width:520px){.row,.row3{grid-template-columns:1fr}}
+.metric{background:var(--color-background-secondary);border-radius:var(--r);padding:.75rem 1rem}
+.metric-label{font-size:11px;color:var(--color-text-tertiary);margin-bottom:3px;text-transform:uppercase;letter-spacing:.04em}
+.metric-value{font-size:18px;font-weight:500;color:var(--color-text-primary)}
+.metric-sub{font-size:11px;color:var(--color-text-secondary);margin-top:2px}
+.badge{display:inline-block;font-size:11px;padding:2px 8px;border-radius:99px;font-weight:500}
+.badge-info{background:var(--color-background-info);color:var(--color-text-info)}
+.badge-warn{background:var(--color-background-warning);color:var(--color-text-warning)}
+.badge-ok{background:var(--color-background-success);color:var(--color-text-success)}
+.badge-err{background:var(--color-background-danger);color:var(--color-text-danger)}
+.divider{border:none;border-top:0.5px solid var(--color-border-tertiary);margin:12px 0}
+.state-flow{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px}
+.state{padding:5px 10px;border-radius:6px;font-size:12px;font-weight:500;border:0.5px solid var(--color-border-secondary);background:var(--color-background-secondary);color:var(--color-text-secondary);cursor:pointer;transition:all .2s}
+.state.active-state{border-color:var(--color-border-primary);color:var(--color-text-primary);background:var(--color-background-primary)}
+.arrow-sep{font-size:14px;color:var(--color-text-tertiary)}
+.trigger-box{margin-top:10px;padding:8px 10px;background:var(--color-background-secondary);border-radius:var(--r);border:0.5px solid var(--color-border-tertiary)}
+.trigger-box p{font-size:12px;color:var(--color-text-secondary);line-height:1.5}
+.trigger-label{font-size:10px;font-weight:500;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px}
+.lod-bar{display:flex;margin-top:10px;border-radius:6px;overflow:hidden;height:28px}
+.lod-seg{display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:500;cursor:default}
+.lod-seg:hover .lod-tip{display:block}
+table.vtable{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px}
+table.vtable th{font-weight:500;font-size:11px;color:var(--color-text-secondary);text-align:left;padding:5px 8px;border-bottom:0.5px solid var(--color-border-tertiary)}
+table.vtable td{padding:6px 8px;border-bottom:0.5px solid var(--color-border-tertiary);color:var(--color-text-primary)}
+table.vtable tr:last-child td{border-bottom:none}
+.bar-wrap{display:flex;align-items:center;gap:6px}
+.bar-bg{flex:1;height:6px;background:var(--color-background-secondary);border-radius:99px;overflow:hidden}
+.bar-fill{height:6px;border-radius:99px;background:var(--color-border-primary)}
+.tier-row{display:flex;align-items:flex-start;gap:10px;margin-bottom:8px}
+.tier-dot{width:8px;height:8px;border-radius:50%;margin-top:5px;flex-shrink:0}
+.tier-text{font-size:12px;color:var(--color-text-secondary);line-height:1.5}
+.tier-text strong{font-weight:500;color:var(--color-text-primary)}
+.heat-demo{margin-top:10px}
+.heat-label{font-size:11px;color:var(--color-text-tertiary);margin-bottom:6px}
+.car-row{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.car-icon{font-size:14px;width:20px;text-align:center}
+.car-name{font-size:12px;color:var(--color-text-secondary);width:100px}
+.heat-seg{height:8px;border-radius:99px;margin-right:4px}
+.notice-row{display:flex;align-items:center;gap:6px;margin-top:2px}
+.notice-row p{font-size:11px;color:var(--color-text-tertiary)}
+.sys-grid{display:grid;grid-template-columns:1fr 1fr;gap:var(--gap)}
+@media(max-width:480px){.sys-grid{grid-template-columns:1fr}}
+.sys-card{background:var(--color-background-secondary);border-radius:var(--r);padding:.75rem}
+.sys-card-title{font-size:12px;font-weight:500;color:var(--color-text-primary);margin-bottom:3px}
+.sys-card-body{font-size:11px;color:var(--color-text-secondary);line-height:1.5}
+.env-row{display:flex;gap:10px;margin-bottom:8px}
+.env-icon{font-size:18px;flex-shrink:0;margin-top:2px}
+.env-text h3{font-size:13px;font-weight:500;color:var(--color-text-primary);margin-bottom:2px}
+.env-text p{font-size:12px;color:var(--color-text-secondary);line-height:1.5}
+.audio-chip{display:inline-flex;align-items:center;gap:5px;font-size:12px;padding:4px 10px;border-radius:99px;border:0.5px solid var(--color-border-secondary);background:var(--color-background-secondary);color:var(--color-text-secondary);margin:2px}
+</style>
+<div class="wrap">
+<div class="header">
+  <h1>Neo-Vice 2030 — System Design</h1>
+  <p>Enhanced architecture incorporating next-gen simulation layers for a 2030 Miami open world</p>
+</div>
+
+<div class="tabs">
+  <button class="tab active" onclick="show('fsm',this)">NPC Brain (FSM)</button>
+  <button class="tab" onclick="show('lod',this)">Traffic LOD</button>
+  <button class="tab" onclick="show('tech',this)">2030 Tech Layer</button>
+  <button class="tab" onclick="show('police',this)">Police AI</button>
+  <button class="tab" onclick="show('vehicles',this)">Vehicle Physics</button>
+  <button class="tab" onclick="show('env',this)">Environment</button>
+  <button class="tab" onclick="show('audio',this)">Dynamic Audio</button>
+</div>
+
+<!-- FSM -->
+<div id="fsm" class="panel active">
+  <div class="card">
+    <div class="card-title">NPC behavior state machine</div>
+    <div class="card-sub">Click any state to inspect its trigger conditions and transitions</div>
+    <div class="state-flow" id="stateFlow">
+      <div class="state active-state" onclick="setNPCState(0)">Idle</div>
+      <div class="arrow-sep">→</div>
+      <div class="state" onclick="setNPCState(1)">Curious</div>
+      <div class="arrow-sep">→</div>
+      <div class="state" onclick="setNPCState(2)">Alarmed</div>
+      <div class="arrow-sep">→</div>
+      <div class="state" onclick="setNPCState(3)">Panicked</div>
+      <div class="arrow-sep">→</div>
+      <div class="state" onclick="setNPCState(4)">Self-preservation</div>
+    </div>
+    <div class="trigger-box" id="triggerBox">
+      <div class="trigger-label">Current state: Idle</div>
+      <p>Default pedestrian loop — ambient animations, social interactions, phone usage. NPC evaluates environment at 2Hz tick rate.</p>
+    </div>
+  </div>
+  <div class="row">
+    <div class="card">
+      <div class="card-title">Behavior tree priority</div>
+      <div class="card-sub">Evaluation order on each tick</div>
+      <div class="tier-row"><div class="tier-dot" style="background:var(--color-background-danger);border:0.5px solid var(--color-text-danger)"></div><div class="tier-text"><strong>Self-preservation (P1)</strong> — flee, call 911, hide</div></div>
+      <div class="tier-row"><div class="tier-dot" style="background:var(--color-background-warning);border:0.5px solid var(--color-text-warning)"></div><div class="tier-text"><strong>Threat assessment (P2)</strong> — evaluate LOS, distance, sound</div></div>
+      <div class="tier-row"><div class="tier-dot" style="background:var(--color-background-info);border:0.5px solid var(--color-text-info)"></div><div class="tier-text"><strong>Social behavior (P3)</strong> — record on ViceGram, shout alerts</div></div>
+      <div class="tier-row"><div class="tier-dot" style="background:var(--color-background-secondary);border:0.5px solid var(--color-border-secondary)"></div><div class="tier-text"><strong>Ambient loop (P4)</strong> — idle animations, dialogue</div></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Threat evaluation inputs</div>
+      <div class="card-sub">Variables sampled on each state transition</div>
+      <div class="metric" style="margin-bottom:8px">
+        <div class="metric-label">Threat distance</div>
+        <div class="metric-value">&#60; 25m</div>
+        <div class="metric-sub">Gunshot → immediate panic transition</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Line-of-sight</div>
+        <div class="metric-value">Boolean</div>
+        <div class="metric-sub">Blocks ViceGram upload if no LOS</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- LOD -->
+<div id="lod" class="panel">
+  <div class="card">
+    <div class="card-title">Level-of-detail radius system</div>
+    <div class="card-sub">Traffic fidelity scales with proximity — eliminates pop-in while preserving performance</div>
+    <div class="lod-bar">
+      <div class="lod-seg" style="flex:3;background:var(--color-background-secondary);color:var(--color-text-tertiary);font-size:11px;padding:0 8px">2D sprites · &gt;500m</div>
+      <div class="lod-seg" style="flex:2;background:var(--color-background-info);color:var(--color-text-info);font-size:11px;padding:0 8px">Low-poly 3D · 100–500m</div>
+      <div class="lod-seg" style="flex:1.5;background:var(--color-background-warning);color:var(--color-text-warning);font-size:11px;padding:0 8px">Full physics · &lt;100m</div>
+    </div>
+    <p style="font-size:11px;color:var(--color-text-tertiary);margin-top:6px">LOD transitions use a 20m hysteresis band to prevent flickering at boundary zones</p>
+  </div>
+  <div class="row">
+    <div class="card">
+      <div class="card-title">Ooze factor behaviors</div>
+      <div class="card-sub">Traffic rules that make the world feel alive</div>
+      <div class="tier-row"><div class="tier-dot" style="background:var(--color-text-info);"></div><div class="tier-text"><strong>Lane splitting</strong> — motorcycles navigate between queued traffic at low speed</div></div>
+      <div class="tier-row"><div class="tier-dot" style="background:var(--color-text-warning);"></div><div class="tier-text"><strong>Emergency priority</strong> — AI vehicles detect siren audio + lights and pull right within 2s</div></div>
+      <div class="tier-row"><div class="tier-dot" style="background:var(--color-text-success);"></div><div class="tier-text"><strong>Drone traffic layer</strong> — 2030 aerial delivery drones follow separate altitude pathfinding</div></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Population density management</div>
+      <div class="card-sub">Spawn budget by district and time of day</div>
+      <div style="margin-top:4px">
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span style="color:var(--color-text-secondary)">Downtown (peak)</span><span style="color:var(--color-text-primary);font-weight:500">320 agents</span></div>
+        <div class="bar-bg" style="margin-bottom:8px"><div class="bar-fill" style="width:90%"></div></div>
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span style="color:var(--color-text-secondary)">Port district</span><span style="color:var(--color-text-primary);font-weight:500">180 agents</span></div>
+        <div class="bar-bg" style="margin-bottom:8px"><div class="bar-fill" style="width:55%"></div></div>
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span style="color:var(--color-text-secondary)">Suburbs (night)</span><span style="color:var(--color-text-primary);font-weight:500">45 agents</span></div>
+        <div class="bar-bg"><div class="bar-fill" style="width:14%"></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Tech -->
+<div id="tech" class="panel">
+  <div class="row" style="margin-bottom:var(--gap)">
+    <div class="card">
+      <div class="card-title">Electronic warfare</div>
+      <div class="card-sub">Requires player tech tier 3+ vehicle</div>
+      <div class="sys-grid">
+        <div class="sys-card"><div class="sys-card-title">Traffic hack</div><div class="sys-card-body">Override signal timing — turns light green on approach or traps pursuers at red</div></div>
+        <div class="sys-card"><div class="sys-card-title">Drone disable</div><div class="sys-card-body">Short-range EMP burst knocks police surveillance drones into forced landing</div></div>
+        <div class="sys-card"><div class="sys-card-title">Camera loop</div><div class="sys-card-body">Injects 30s loop into district CCTV — prevents Digital Footprint accumulation</div></div>
+        <div class="sys-card"><div class="sys-card-title">GPS spoof</div><div class="sys-card-body">Broadcasts false position to police cruiser dispatch for 60 seconds</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Digital Footprint — wanted system</div>
+      <div class="card-sub">Replaces the simple witness mechanic</div>
+      <div class="metric" style="margin-bottom:8px">
+        <div class="metric-label">ViceGram trending score</div>
+        <div class="metric-value" id="vgScore">0</div>
+        <div class="metric-sub">Decays 12pts/min — accelerates in no-signal zones</div>
+      </div>
+      <div class="tier-row"><div class="tier-dot" style="background:var(--color-text-success)"></div><div class="tier-text"><strong>0–20</strong> — no digital trace, stars clear normally</div></div>
+      <div class="tier-row"><div class="tier-dot" style="background:var(--color-text-warning)"></div><div class="tier-text"><strong>21–60</strong> — face recognition active, vehicle flagged</div></div>
+      <div class="tier-row"><div class="tier-dot" style="background:var(--color-text-danger)"></div><div class="tier-text"><strong>61–100</strong> — city-wide alert, 2x police response, bounty posted</div></div>
+      <div style="margin-top:10px;display:flex;gap:6px">
+        <button onclick="addScore(15)" style="font-size:12px;flex:1">+ Crime (public)</button>
+        <button onclick="addScore(-20)" style="font-size:12px;flex:1">Enter dead zone</button>
+        <button onclick="addScore(-100)" style="font-size:12px;flex:1">Reset</button>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-title">EV propulsion layer</div>
+    <div class="card-sub">Electric vehicles add distinct gameplay dimensions beyond audio differences</div>
+    <div class="row3">
+      <div class="metric"><div class="metric-label">Silent running</div><div class="metric-value" style="font-size:14px">Stealth mode</div><div class="metric-sub">No engine audio = harder NPC detection at slow speed</div></div>
+      <div class="metric"><div class="metric-label">Torque delivery</div><div class="metric-value" style="font-size:14px">Instant</div><div class="metric-sub">0–60 in 2.1s — off-the-line advantage over ICE pursers</div></div>
+      <div class="metric"><div class="metric-label">Charging stations</div><div class="metric-value" style="font-size:14px">Hazard</div><div class="metric-sub">Battery rupture = 15m explosion radius vs gas pump 8m</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- Police -->
+<div id="police" class="panel">
+  <div class="card">
+    <div class="card-title">Last Known Position (LKP) grid search</div>
+    <div class="card-sub">Police lose player position on line-of-sight break — investigation replaces omniscience</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px">
+      <div class="metric"><div class="metric-label">Phase 1</div><div class="metric-value" style="font-size:13px">Rush LKP</div><div class="metric-sub">All units converge on last confirmed position</div></div>
+      <div class="metric"><div class="metric-label">Phase 2</div><div class="metric-value" style="font-size:13px">Grid sweep</div><div class="metric-sub">Expanding search radius from LKP, helicopter active at 3★+</div></div>
+      <div class="metric"><div class="metric-label">Phase 3</div><div class="metric-value" style="font-size:13px">Checkpoint</div><div class="metric-sub">Road blocks placed at district exits, heat score monitored</div></div>
+    </div>
+  </div>
+  <div class="row">
+    <div class="card">
+      <div class="card-title">Vehicle heat signature</div>
+      <div class="card-sub">Hidden value determines how quickly police re-acquire target</div>
+      <div class="heat-demo">
+        <div class="heat-label">Recognition speed by vehicle color/type</div>
+        <div class="car-row">
+          <div class="car-name" style="font-size:12px;color:var(--color-text-secondary)">Neon supercar</div>
+          <div class="heat-seg" style="width:85%;background:var(--color-background-danger);border:0.5px solid var(--color-text-danger)"></div>
+          <span style="font-size:11px;color:var(--color-text-danger)">Fast</span>
+        </div>
+        <div class="car-row">
+          <div class="car-name" style="font-size:12px;color:var(--color-text-secondary)">White sports</div>
+          <div class="heat-seg" style="width:55%;background:var(--color-background-warning);border:0.5px solid var(--color-text-warning)"></div>
+          <span style="font-size:11px;color:var(--color-text-warning)">Med</span>
+        </div>
+        <div class="car-row">
+          <div class="car-name" style="font-size:12px;color:var(--color-text-secondary)">Grey sedan</div>
+          <div class="heat-seg" style="width:20%;background:var(--color-background-success);border:0.5px solid var(--color-text-success)"></div>
+          <span style="font-size:11px;color:var(--color-text-success)">Slow</span>
+        </div>
+        <div class="car-row">
+          <div class="car-name" style="font-size:12px;color:var(--color-text-secondary)">Stolen police</div>
+          <div class="heat-seg" style="width:15%;background:var(--color-background-success);border:0.5px solid var(--color-text-success)"></div>
+          <span style="font-size:11px;color:var(--color-text-success)">Slow</span>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Wanted star escalation</div>
+      <div class="card-sub">Each tier unlocks new police assets and behaviors</div>
+      <div class="tier-row"><div class="tier-dot" style="background:#888"></div><div class="tier-text"><strong>1★</strong> — 2 patrol units, no helicopter, LKP search only</div></div>
+      <div class="tier-row"><div class="tier-dot" style="background:var(--color-text-warning)"></div><div class="tier-text"><strong>2★</strong> — 4 units, spike strips, grid search active</div></div>
+      <div class="tier-row"><div class="tier-dot" style="background:var(--color-text-danger)"></div><div class="tier-text"><strong>3★</strong> — helicopter + police drone, roadblocks</div></div>
+      <div class="tier-row"><div class="tier-dot" style="background:#e24b4a"></div><div class="tier-text"><strong>4★</strong> — SWAT, 8 units, EMP vehicle deployed</div></div>
+      <div class="tier-row"><div class="tier-dot" style="background:#a32d2d"></div><div class="tier-text"><strong>5★</strong> — Military drone authorized, city lockdown</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- Vehicles -->
+<div id="vehicles" class="panel">
+  <div class="card">
+    <div class="card-title">Vehicle class physics constants</div>
+    <div class="card-sub">Defining parameters that produce distinct driving feel for each class</div>
+    <table class="vtable">
+      <thead>
+        <tr>
+          <th>Class</th>
+          <th>Top speed</th>
+          <th>Traction</th>
+          <th>Mass</th>
+          <th>Special</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="badge badge-err">Hyper/Sports</span></td>
+          <td><div class="bar-wrap"><div class="bar-bg"><div class="bar-fill" style="width:95%"></div></div><span style="color:var(--color-text-secondary)">Very high</span></div></td>
+          <td>High</td>
+          <td>Low</td>
+          <td style="color:var(--color-text-secondary)">Active aero · KERS boost</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-warn">Muscle</span></td>
+          <td><div class="bar-wrap"><div class="bar-bg"><div class="bar-fill" style="width:78%"></div></div><span style="color:var(--color-text-secondary)">High</span></div></td>
+          <td>Low (drift)</td>
+          <td>Med</td>
+          <td style="color:var(--color-text-secondary)">Wheelie · High torque</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-ok">Off-road/SUV</span></td>
+          <td><div class="bar-wrap"><div class="bar-bg"><div class="bar-fill" style="width:55%"></div></div><span style="color:var(--color-text-secondary)">Med</span></div></td>
+          <td>High (terrain)</td>
+          <td>Heavy</td>
+          <td style="color:var(--color-text-secondary)">Water fording · Durability</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-info">EV Commuter</span></td>
+          <td><div class="bar-wrap"><div class="bar-bg"><div class="bar-fill" style="width:52%"></div></div><span style="color:var(--color-text-secondary)">Med</span></div></td>
+          <td>Med</td>
+          <td>Heavy+</td>
+          <td style="color:var(--color-text-secondary)">Silent running · Stealth</td>
+        </tr>
+        <tr>
+          <td><span class="badge" style="background:var(--color-background-secondary);color:var(--color-text-secondary);border:0.5px solid var(--color-border-secondary)">Hover/VTOL</span></td>
+          <td><div class="bar-wrap"><div class="bar-bg"><div class="bar-fill" style="width:88%"></div></div><span style="color:var(--color-text-secondary)">Very high</span></div></td>
+          <td>N/A</td>
+          <td>Med</td>
+          <td style="color:var(--color-text-secondary)">Altitude escape · 2030 exclusive</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Environment -->
+<div id="env" class="panel">
+  <div class="row">
+    <div class="card">
+      <div class="card-title">Tiered destructibility</div>
+      <div class="card-sub">Every impact must produce an appropriate response</div>
+      <div class="tier-row"><div class="tier-dot" style="background:var(--color-text-danger)"></div><div class="tier-text"><strong>Prop tier</strong> — trash cans, benches, street lights, planters. Fully physical, Havok-simulated debris.</div></div>
+      <div class="tier-row"><div class="tier-dot" style="background:var(--color-text-warning)"></div><div class="tier-text"><strong>Structural tier</strong> — storefront glass, thin partition walls, vehicle barriers. Breakable with material-specific audio + particle.</div></div>
+      <div class="tier-row"><div class="tier-dot" style="background:var(--color-text-secondary)"></div><div class="tier-text"><strong>Static tier</strong> — skyscrapers, bridges, highway pillars. Unbreakable — collision transfers full force back to vehicle.</div></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Dynamic weather impact</div>
+      <div class="card-sub">2030 climate events force real gameplay adaptation</div>
+      <div class="env-row"><div class="env-icon">&#9928;</div><div class="env-text"><h3>Flash flood (category 1)</h3><p>Streets below 2m elevation become navigable by boat. Ground vehicles stall in 0.8m+ water depth.</p></div></div>
+      <div class="env-row"><div class="env-icon">&#9928;</div><div class="env-text"><h3>Hurricane (category 2+)</h3><p>Debris projectiles, reduced NPC population, helicopter no-fly zone, traction drops 40%.</p></div></div>
+      <div class="env-row"><div class="env-icon">&#9729;</div><div class="env-text"><h3>Heatwave</h3><p>EV range reduced 18%, tire grip increased on superheated asphalt, NPCs seek shade — fewer witnesses.</p></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- Audio -->
+<div id="audio" class="panel">
+  <div class="card">
+    <div class="card-title">Dynamic radio system</div>
+    <div class="card-sub">Music is a character — interruptions bridge the player and world systems</div>
+    <div class="row">
+      <div>
+        <div class="sys-card" style="margin-bottom:8px"><div class="sys-card-title">Breaking news interrupt</div><div class="sys-card-body">If player commits a high-profile crime within 90 seconds, DJ interrupts mid-song with a fictionalized report. References vehicle color, weapon type, district.</div></div>
+        <div class="sys-card"><div class="sys-card-title">ViceGram trending segment</div><div class="sys-card-body">When Digital Footprint score exceeds 60, radio stations begin reading out player's trending posts. Increases immersion and applies pressure.</div></div>
+      </div>
+      <div>
+        <div class="sys-card" style="margin-bottom:8px"><div class="sys-card-title">Adaptive music state</div><div class="sys-card-body">Radio switches to ambient/downbeat when police stars are cleared. Tension track plays during active chase without interrupting station selection.</div></div>
+        <div class="sys-card"><div class="sys-card-title">Environmental audio LOD</div><div class="sys-card-body">EV engines require entirely new audio design — synthetic whine, regen braking hum, capacitor discharge on boost. Distinct identity from ICE.</div></div>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-title">Audio cue system — NPC state transitions</div>
+    <div class="card-sub">Sound is the primary signal before visuals confirm a state change</div>
+    <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">
+      <div class="audio-chip">Distant explosion → ambient rumble</div>
+      <div class="audio-chip">Gunshot &lt;25m → NPCs gasp / scream</div>
+      <div class="audio-chip">Police siren → traffic pull-over sequence</div>
+      <div class="audio-chip">Flash flood alert → emergency broadcast</div>
+      <div class="audio-chip">EMP burst → electronic glitch + silence</div>
+      <div class="audio-chip">ViceGram upload → notification chime</div>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<script>
+const states=[
+  {label:"Idle",desc:"Default pedestrian loop — ambient animations, social interactions, phone usage. NPC evaluates environment at 2Hz tick rate."},
+  {label:"Curious",desc:"Trigger: explosion sound >100m OR visual smoke. NPC stops, faces direction, evaluates for 3s. Eyes scan. No movement change yet. Transitions to Alarmed if stimulus intensifies."},
+  {label:"Alarmed",desc:"Trigger: explosion <50m OR crowd panic nearby. NPC begins backing away, makes eye contact with others, potentially films on phone — adds 8pts to Digital Footprint."},
+  {label:"Panicked",desc:"Trigger: gunshot <25m OR direct line-of-sight to weapon. Immediate sprint away from threat vector. Drops inventory. Calls 911 after 10s if threat persists."},
+  {label:"Self-preservation",desc:"Trigger: threat still present after 12s or direct contact. NPC seeks hard cover (walls, vehicles), calls 911, stays crouched. Will not re-emerge until police arrive or 90s passes."},
+];
+let npcIdx=0;
+function setNPCState(i){
+  npcIdx=i;
+  document.querySelectorAll('#stateFlow .state').forEach((el,j)=>{
+    el.classList.toggle('active-state',j===i);
+  });
+  const b=document.getElementById('triggerBox');
+  b.querySelector('.trigger-label').textContent='Current state: '+states[i].label;
+  b.querySelector('p').textContent=states[i].desc;
+}
+
+let vg=0;
+function addScore(n){
+  vg=Math.max(0,Math.min(100,vg+n));
+  document.getElementById('vgScore').textContent=vg;
+}
+
+function show(id,el){
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  el.classList.add('active');
+}
+</script>

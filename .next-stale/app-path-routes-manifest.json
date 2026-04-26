@@ -1,0 +1,5 @@
+{
+  "/api/world/route": "/api/world",
+  "/_not-found/page": "/_not-found",
+  "/page": "/"
+}
