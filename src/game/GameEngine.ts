@@ -679,6 +679,9 @@ export class GameEngine {
     }
 
     const pistolClone = this.externalModels.pistol.scene.clone();
+    // Ensure clone is visible (source models are hidden to prevent giant gun bug)
+    pistolClone.visible = true;
+    pistolClone.traverse((child: any) => { child.visible = true; });
     pistolClone.name = "held-pistol";
     pistolClone.scale.setScalar(scale);
 
@@ -1404,6 +1407,16 @@ export class GameEngine {
     this.modelsLoaded = true;
     this.onLoadProgress(100, "All models loaded!");
 
+    // IMPORTANT: Hide all loaded source model scenes so they don't appear
+    // as giant objects at the world origin (fixes the "big gun on the street" bug).
+    // We only ever use clones of these models, never the originals directly.
+    for (const key of Object.keys(this.externalModels) as (keyof typeof this.externalModels)[]) {
+      const entry = this.externalModels[key];
+      if (entry?.scene) {
+        entry.scene.visible = false;
+      }
+    }
+
     // Apply character model to player and all existing pedestrians
     this.applyCharacterModelToPlayer();
     for (const ped of this.pedestrians) {
@@ -1447,6 +1460,9 @@ export class GameEngine {
     if (!sourceModel) return;
 
     const cloned = sourceModel.clone();
+    // Ensure clone is visible (source models are hidden to prevent giant gun bug)
+    cloned.visible = true;
+    cloned.traverse((child: any) => { child.visible = true; });
 
     // Compute bounding box to determine model dimensions
     const box = new Box3();
@@ -1458,9 +1474,10 @@ export class GameEngine {
     // Determine target dimensions based on vehicle class
     let targetLength: number, targetWidth: number, targetHeight: number;
     if (vehicle.vehicleClass === "bike") {
-      targetLength = 2.6;
-      targetWidth = 0.8;
-      targetHeight = 1.6;
+      // Motorcycle: realistic dimensions so they aren't tiny
+      targetLength = 3.6;
+      targetWidth = 1.4;
+      targetHeight = 2.0;
     } else if (vehicle.vehicleClass === "suv") {
       targetLength = 4.8;
       targetWidth = 2.4;
@@ -1527,6 +1544,9 @@ export class GameEngine {
     if (!this.externalModels.character) return;
     const { scene, animations } = this.externalModels.character;
     const cloned = cloneSkinned(scene) as Group;
+    // Ensure clone is visible (source models are hidden to prevent giant gun bug)
+    cloned.visible = true;
+    cloned.traverse((child: any) => { child.visible = true; });
 
     // Compute model bounds for proper sizing
     const box3 = new Box3();
@@ -1589,6 +1609,9 @@ export class GameEngine {
     if (!source) return;
 
     const cloned = usePoliceModel ? source.scene.clone() : cloneSkinned(source.scene) as Group;
+    // Ensure clone is visible (source models are hidden to prevent giant gun bug)
+    cloned.visible = true;
+    cloned.traverse((child: any) => { child.visible = true; });
     const animations: AnimationClip[] =
       "animations" in source ? (source.animations as AnimationClip[]) : [];
 
@@ -1728,8 +1751,21 @@ export class GameEngine {
         if (vehicle.vehicleClass === "bike") {
           this.player.mesh.visible = true;
           this.player.mesh.position.copy(vehicle.position);
-          this.player.mesh.position.y = 0.3; // sit height on bike
-          this.player.mesh.rotation.y = vehicle.direction;
+          this.player.mesh.position.y = vehicle.position.y + 0.55; // sit on the seat
+          this.player.mesh.rotation.y = vehicle.direction + Math.PI; // face forward on the bike
+          // Crouch the mesh to simulate sitting pose
+          this.player.mesh.scale.set(1, 0.72, 1);
+
+          // Play idle/sit animation if available
+          if (this.player.mixer) {
+            this.player.mixer.update(dt);
+            if (this.player.idleAction && !this.player.idleAction.isRunning()) {
+              this.player.walkAction?.stop();
+              this.player.runAction?.stop();
+              this.player.aimAction?.stop();
+              this.player.idleAction.play();
+            }
+          }
         } else {
           this.player.mesh.visible = false;
         }
@@ -1739,6 +1775,8 @@ export class GameEngine {
     }
 
     this.player.mesh.visible = true;
+    // Restore scale in case we were on a motorcycle (sitting crouch)
+    this.player.mesh.scale.set(1, 1, 1);
     const previous = this.player.position.clone();
     const forward = new Vector3(-Math.sin(this.cameraYaw), 0, -Math.cos(this.cameraYaw));
     const right = new Vector3(Math.cos(this.cameraYaw), 0, -Math.sin(this.cameraYaw));
@@ -1761,7 +1799,10 @@ export class GameEngine {
     }
 
     if (this.aiming) {
-      this.playerYaw = this.cameraYaw;
+      // Face the player in the direction the camera is looking (forward),
+      // not toward the camera. cameraYaw points backward from the player,
+      // so add PI to face forward.
+      this.playerYaw = this.cameraYaw + Math.PI;
     }
 
     this.player.mesh.rotation.y = this.playerYaw;
@@ -1802,19 +1843,28 @@ export class GameEngine {
       this.player.mixer.update(dt);
 
       let targetAction: AnimationAction | undefined;
-      if (this.aiming && this.player.aimAction) {
+      if (this.aiming && isMoving) {
+        // When aiming AND moving, use walk animation so the player doesn't glide
+        targetAction = this.player.walkAction ?? this.player.aimAction;
+      } else if (this.aiming && this.player.aimAction) {
         targetAction = this.player.aimAction;
       } else {
         const wantsRun = isMoving && (this.keys.has("ShiftLeft") || this.keys.has("ShiftRight")) && !this.aiming;
         targetAction = isMoving ? (wantsRun ? this.player.runAction : this.player.walkAction) : this.player.idleAction;
       }
 
-      if (targetAction && !targetAction.isRunning()) {
-        this.player.idleAction?.stop();
-        this.player.walkAction?.stop();
-        this.player.runAction?.stop();
-        this.player.aimAction?.stop();
-        targetAction.play();
+      // Always stop all other actions before playing the target to prevent
+      // animation state getting stuck (fixes gliding/frozen pose)
+      if (targetAction) {
+        const allActions = [this.player.idleAction, this.player.walkAction, this.player.runAction, this.player.aimAction];
+        for (const action of allActions) {
+          if (action && action !== targetAction && action.isRunning()) {
+            action.stop();
+          }
+        }
+        if (!targetAction.isRunning()) {
+          targetAction.play();
+        }
       }
     } else if (!this.player.inVehicle) {
       this.animateFallbackHumanoid(this.player.mesh, isMoving ? (this.aiming ? 0.24 : 0.78) : 0.04, this.aiming);
@@ -2456,14 +2506,28 @@ export class GameEngine {
       if (pedestrian.mixer) {
         pedestrian.mixer.update(dt);
         const moving = pedestrian.position.distanceTo(previousPosition) > 0.01;
-        if (moving && pedestrian.walkAction && !pedestrian.walkAction.isRunning()) {
-          pedestrian.idleAction?.stop();
-          pedestrian.runAction?.stop();
-          pedestrian.walkAction.play();
-        } else if (!moving && pedestrian.idleAction && !pedestrian.idleAction.isRunning()) {
-          pedestrian.walkAction?.stop();
-          pedestrian.runAction?.stop();
-          pedestrian.idleAction.play();
+        const isRunning = pedestrian.state === "flee" || pedestrian.state === "pursue" || pedestrian.state === "attack" || pedestrian.state === "angry";
+
+        let targetPedAction: AnimationAction | undefined;
+        if (moving && isRunning && pedestrian.runAction) {
+          targetPedAction = pedestrian.runAction;
+        } else if (moving && pedestrian.walkAction) {
+          targetPedAction = pedestrian.walkAction;
+        } else if (!moving && pedestrian.idleAction) {
+          targetPedAction = pedestrian.idleAction;
+        }
+
+        // Stop all other actions before playing the target to prevent gliding
+        if (targetPedAction) {
+          const allPedActions = [pedestrian.idleAction, pedestrian.walkAction, pedestrian.runAction, pedestrian.aimAction];
+          for (const action of allPedActions) {
+            if (action && action !== targetPedAction && action.isRunning()) {
+              action.stop();
+            }
+          }
+          if (!targetPedAction.isRunning()) {
+            targetPedAction.play();
+          }
         }
       } else {
         this.animateFallbackHumanoid(pedestrian.mesh, pedestrian.position.distanceTo(previousPosition) > 0.01 ? 0.5 : 0.03);
