@@ -20,7 +20,7 @@ export type PedestrianState =
   | "npc_steal"
   | "npc_rob"
   | "npc_attack";
-export type Archetype = "cautious" | "tourist" | "hustler" | "aggressive";
+export type Archetype = "cautious" | "tourist" | "hustler" | "aggressive" | "local" | "worker" | "vendor" | "criminal";
 export type MissionStepKind = "reach" | "loseWanted" | "collect";
 export type SettingKey = "mouseSensitivity" | "showDebug" | "trafficDensity" | "crowdDensity";
 
@@ -29,8 +29,10 @@ export type NPCDailyActivity = "walking" | "window_shopping" | "sitting_bench" |
 
 /** NPC Finite State Machine brain states */
 export type NPCBrainState =
+  | "unaware"
   | "idle"
   | "curious"
+  | "alert"
   | "alarmed"
   | "panicked"
   | "selfPreservation";
@@ -334,6 +336,10 @@ export type PedestrianEntity = {
   pursuitTarget: "player" | "npc" | null;
   /** Target entity id when pursuing an NPC criminal */
   pursuitTargetId: string | null;
+  /** Who influenced this NPC's state (for social spread) */
+  influencedBy: string | null;
+  /** Current awareness scale (0-100) */
+  awarenessLevel: number;
   mixer?: AnimationMixer;
   idleAction?: AnimationAction;
   walkAction?: AnimationAction;

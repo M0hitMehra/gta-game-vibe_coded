@@ -25,7 +25,7 @@ import {
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
 // @ts-ignore
 import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js";
-import { CHEAT_CODES, CITY_COLORS, GAME_CONFIG, WEAPONS, VEHICLE_PHYSICS, POLICE_CONFIG, FOOTPRINT_CONFIG, PARTICLE_CONFIG, DESTRUCTION_CONFIG, TRAFFIC_LIGHT_CONFIG, NPC_CRIME_CONFIG, SHOP_CONFIG } from "@/game/config";
+import { CHEAT_CODES, CITY_COLORS, GAME_CONFIG, WEAPONS, VEHICLE_PHYSICS, POLICE_CONFIG, FOOTPRINT_CONFIG, PARTICLE_CONFIG, DESTRUCTION_CONFIG, TRAFFIC_LIGHT_CONFIG, NPC_CRIME_CONFIG, SHOP_CONFIG, CAMERA_CINEMATIC, NPC_BEHAVIOR_CONFIG, TRAFFIC_BEHAVIOR_CONFIG } from "@/game/config";
 import { EventBus } from "@/game/core/EventBus";
 import { ObjectPool } from "@/game/core/ObjectPool";
 import { SpatialHash } from "@/game/core/SpatialHash";
@@ -88,7 +88,8 @@ export class GameEngine {
   private readonly events = new EventBus<EngineEvents>();
   private readonly clock = new Clock();
   private readonly scene = new Scene();
-  private readonly camera = new PerspectiveCamera(68, 1, 0.1, 800);
+  private readonly camera = new PerspectiveCamera(64, 1, 0.1, 800);
+  private readonly baseFov = 64;
   private readonly renderer: WebGLRenderer;
   private readonly keys = new Set<string>();
   private readonly vehicleHash = new SpatialHash<VehicleEntity>(24);
@@ -119,13 +120,28 @@ export class GameEngine {
   private activeMission: MissionRuntime | null = null;
   private playerYaw = 0;
   private cameraYaw = 0;
-  private cameraPitch = 0.32;
+  private cameraPitch = 0.15;
   private mouseIdleTimer = 0;
   private recentMouseTurn = 0;
-  private cameraCurrent = new Vector3(0, 8, 18);
+  private cameraCurrent = new Vector3(0, 4, 12);
   private cameraVelocity = new Vector3();
   private cameraLookAt = new Vector3();
   private cameraRoll = 0;
+
+  // ── Cinematic Vice City Camera State ──
+  private camIdleTimer = 0;              // how long player has been still
+  private camIdleBreathPhase = 0;        // breathing oscillation phase
+  private camSwayPhase = 0;              // handheld sway oscillation
+  private camSpeedSmoothed = 0;          // smoothed player ground speed
+  private camVehicleSpeedSmoothed = 0;   // smoothed vehicle speed
+  private camShakeIntensity = 0;         // collision/impact shake intensity
+  private camShakeDecay = 0;             // shake decay timer
+  private camPreviousPlayerPos = new Vector3();
+  private camMovementState: 'idle' | 'walk' | 'run' | 'drive' = 'idle';
+  private camStateBlend = 0;             // 0‥1 blend into current state
+  private camTurnMomentum = 0;           // accumulated yaw delta for overshoot
+  private camFovCurrent = 64;            // smoothed current FOV
+  private camLookAheadOffset = new Vector3(); // smoothed look-ahead
   private accumulator = 0;
   private frameId = 0;
   private running = false;
@@ -2076,13 +2092,45 @@ export class GameEngine {
     const obstacleFactor = this.trafficObstacleFactor(vehicle);
     const trafficLightFactor = this.trafficLightFactor(vehicle);
 
+    // ── Driver Stress System ("Organized Disorder") ──
+    let stress = 0;
+    const playerDist = vehicle.position.distanceTo(this.player.position);
+    
+    if (this.aiming || this.player.wanted > 0) {
+      stress += (1 - Math.min(1, playerDist / 40)) * 100;
+    }
+    
+    const nearbyPanicked = this.pedestrians.filter(p => 
+      p.fsmState === "panicked" && !p.inVehicleId && p.position.distanceTo(vehicle.position) < 20
+    ).length;
+    stress += nearbyPanicked * 15;
+
+    if (this.player.inVehicle) {
+      const pVehicle = this.getOccupiedVehicle();
+      if (pVehicle && Math.abs(pVehicle.speed) > 12 && playerDist < 30) {
+        stress += 40;
+      }
+    }
+
+    let stressBrake = 1.0;
+    if (stress > TRAFFIC_BEHAVIOR_CONFIG.stressThreshold) {
+      // Panic swerve
+      if (Math.random() < TRAFFIC_BEHAVIOR_CONFIG.swerveChance * dt) {
+        vehicle.direction += (Math.random() > 0.5 ? 1 : -1) * (Math.PI / 3) * dt;
+      }
+      // Panic brake if player is right in front
+      if (playerDist < TRAFFIC_BEHAVIOR_CONFIG.panicBrakeDistance && this.directionBetween(vehicle.position, this.player.position) - vehicle.direction < 0.5) {
+        stressBrake = 0.1;
+      }
+    }
+
     if (obstacleFactor < 0.2 && trafficLightFactor > 0.5) {
       vehicle.blockedTimer = (vehicle.blockedTimer || 0) + dt;
       if (vehicle.blockedTimer > 3 && vehicle.driverPedId) {
         const driver = this.pedestrians.find(p => p.id === vehicle.driverPedId);
         if (driver) {
           const roll = Math.random();
-          if (driver.archetype === "aggressive") {
+          if (driver.archetype === "aggressive" || driver.archetype === "criminal") {
             if (roll < 0.4) {
               this.ejectDriver(vehicle);
               driver.state = "attack";
@@ -2106,7 +2154,7 @@ export class GameEngine {
     }
 
     const cruiseSpeed = vehicle.vehicleClass === "bike" ? vehicle.maxSpeed * 0.55 : vehicle.maxSpeed * 0.68;
-    const targetSpeed = cruiseSpeed * obstacleFactor * trafficLightFactor;
+    const targetSpeed = cruiseSpeed * obstacleFactor * trafficLightFactor * stressBrake;
     vehicle.speed = this.lerp(vehicle.speed, targetSpeed, dt * 2.2);
     this.moveVehicleWithCollision(vehicle, dt);
   }
@@ -2243,7 +2291,29 @@ export class GameEngine {
   }
 
   private updatePedestrians(dt: number) {
-    const isThreatening = this.aiming || this.player.wanted > 0;
+    let disruptionForce = 0;
+    const playerSpeed = this.player.velocity.length();
+    
+    if (this.aiming || this.player.wanted > 0) {
+      disruptionForce = NPC_BEHAVIOR_CONFIG.disruptionRadii.combat;
+    } else if (this.player.inVehicle) {
+      const vehicle = this.getOccupiedVehicle();
+      if (vehicle) {
+        if (Math.abs(vehicle.speed) > 12) {
+          disruptionForce = NPC_BEHAVIOR_CONFIG.disruptionRadii.driveReckless;
+        } else {
+          disruptionForce = NPC_BEHAVIOR_CONFIG.disruptionRadii.driveNormal;
+        }
+      }
+    } else if (playerSpeed > 7) {
+      disruptionForce = NPC_BEHAVIOR_CONFIG.disruptionRadii.sprint;
+    } else if (playerSpeed > 3) {
+      disruptionForce = NPC_BEHAVIOR_CONFIG.disruptionRadii.run;
+    } else {
+      disruptionForce = NPC_BEHAVIOR_CONFIG.disruptionRadii.walk;
+    }
+
+    const cameraDir = new Vector3(-Math.sin(this.cameraYaw), 0, -Math.cos(this.cameraYaw));
 
     for (const pedestrian of this.pedestrians) {
       const previousPosition = pedestrian.position.clone();
@@ -2289,9 +2359,22 @@ export class GameEngine {
           );
         }
 
-        const newBrainState = evaluateNPCState(pedestrian, this.player, isThreatening, dt);
+        const newBrainState = evaluateNPCState(pedestrian, this.player, disruptionForce, this.player.position, dt);
         pedestrian.fsmState = newBrainState;
         pedestrian.state = fsmToLegacyState(newBrainState, pedestrian, this.player);
+
+        // Social Ripple Effect (Panic spreading)
+        if (pedestrian.fsmState === "panicked" || pedestrian.fsmState === "selfPreservation") {
+          const nearbyPeds = this.pedestrianHash.query(pedestrian.position, NPC_BEHAVIOR_CONFIG.socialRippleRadius);
+          for (const other of nearbyPeds) {
+            if (other.id === pedestrian.id || other.role === "cop" || other.inVehicleId) continue;
+            // Panic spreads quickly
+            if (Math.random() < NPC_BEHAVIOR_CONFIG.socialRippleChance * dt) {
+              other.awarenessLevel = Math.max(other.awarenessLevel, NPC_BEHAVIOR_CONFIG.awareness.curiousToAlert);
+              other.influencedBy = pedestrian.id;
+            }
+          }
+        }
 
         // ViceGram filming — alarmed/curious NPCs with LOS add digital footprint
         if (shouldFilm(pedestrian, this.player)) {
@@ -2565,10 +2648,44 @@ export class GameEngine {
 
     for (let index = this.pedestrians.length - 1; index >= 0; index -= 1) {
       const ped = this.pedestrians[index];
-      if (ped.hp > 0) continue;
-      // Spawn blood pool on death
-      this.particles.spawnBloodPool(ped.position);
-      this.removePedestrian(ped);
+      if (ped.hp <= 0) {
+        this.particles.spawnBloodPool(ped.position);
+        this.removePedestrian(ped);
+        continue;
+      }
+
+      const dist = ped.position.distanceTo(this.player.position);
+      if (dist > 180) {
+        this.removePedestrian(ped);
+        continue;
+      }
+
+      // Seamless Despawn: Far away and behind camera
+      if (dist > 90 && ped.role === "civilian" && !ped.inVehicleId && ped.fsmState === "idle") {
+        const toPed = ped.position.clone().sub(this.player.position).normalize();
+        if (toPed.dot(cameraDir) < -0.15) {
+          this.removePedestrian(ped);
+        }
+      }
+    }
+
+    // Seamless Respawn
+    const crowdTarget = Math.max(10, Math.round(GAME_CONFIG.pedestrianCount * this.currentCrowdDensity()));
+    const currentCivilians = this.pedestrians.filter(p => p.role === "civilian" && !p.inVehicleId).length;
+
+    if (currentCivilians < crowdTarget && Math.random() < 0.2) {
+      const angle = this.cameraYaw + Math.PI + (Math.random() - 0.5) * 2.0; // Spawn behind camera
+      const dist = 60 + Math.random() * 30;
+      const spawnPos = this.player.position.clone().add(new Vector3(Math.sin(angle) * dist, 0, Math.cos(angle) * dist));
+      
+      if (!this.collidesWithBuildings(spawnPos)) {
+        this.createPedestrian({
+          id: this.nextId("npc"),
+          position: spawnPos,
+          role: "civilian",
+          archetype: this.pickArchetype()
+        });
+      }
     }
   }
 
@@ -2811,83 +2928,302 @@ export class GameEngine {
   }
 
   private updateCamera(dt: number) {
+    const CC = CAMERA_CINEMATIC;
+
+    // ── 1. Measure player ground speed ──
+    const playerDelta = this.player.position.clone().sub(this.camPreviousPlayerPos);
+    playerDelta.y = 0;
+    const instantSpeed = playerDelta.length() / Math.max(dt, 0.001);
+    this.camSpeedSmoothed = this.lerp(this.camSpeedSmoothed, instantSpeed, dt * 6);
+    this.camPreviousPlayerPos.copy(this.player.position);
+
+    // ── 2. Determine movement state ──
+    const isSprinting = (this.keys.has("ShiftLeft") || this.keys.has("ShiftRight")) && !this.aiming;
+    const prevState = this.camMovementState;
     if (this.player.inVehicle) {
+      this.camMovementState = 'drive';
       const vehicle = this.getOccupiedVehicle();
-      if (vehicle && Math.abs(vehicle.speed) > 1.2 && this.mouseIdleTimer > 0.32) {
-        const assistStrength = Math.max(0.8, Math.min(2.4, Math.abs(vehicle.speed) * 0.08));
-        this.cameraYaw = this.rotateTowards(this.cameraYaw, vehicle.direction, dt * assistStrength);
-      }
-      this.cameraPitch = this.lerp(this.cameraPitch, 0.22, 0.08);
-    } else if (!this.aiming) {
-      const sprintingForward =
-        this.keys.has("KeyW") &&
-        !this.keys.has("KeyA") &&
-        !this.keys.has("KeyD") &&
-        (this.keys.has("ShiftLeft") || this.keys.has("ShiftRight"));
-      if (sprintingForward && this.mouseIdleTimer > 0.85 && this.recentMouseTurn < 0.08) {
-        // playerYaw faces the velocity, which is cameraYaw + PI for forward movement (-Z in three.js).
-        // Pull cameraYaw towards playerYaw - PI to prevent continuous spinning relative to movement.
-        this.cameraYaw = this.rotateTowards(this.cameraYaw, this.playerYaw - Math.PI, dt * 1.25);
-      }
-      this.cameraPitch = Math.max(-0.16, Math.min(0.62, this.cameraPitch));
+      this.camVehicleSpeedSmoothed = this.lerp(
+        this.camVehicleSpeedSmoothed,
+        Math.abs(vehicle?.speed ?? 0),
+        dt * 3.5
+      );
+    } else if (this.camSpeedSmoothed > 8 && isSprinting) {
+      this.camMovementState = 'run';
+    } else if (this.camSpeedSmoothed > 1.2) {
+      this.camMovementState = 'walk';
+    } else {
+      this.camMovementState = 'idle';
     }
 
-    const focusHeight = this.player.inVehicle ? 2.2 : 1.78;
-    const focus = this.player.position.clone().setY(this.player.position.y + focusHeight);
+    // Blend factor: ramps to 1.0 when fully in new state
+    if (this.camMovementState !== prevState) {
+      this.camStateBlend = 0;
+    }
+    this.camStateBlend = Math.min(1, this.camStateBlend + dt * CC.stateBlendSpeed);
+
+    // ── 3. Advance oscillation phases ──
+    this.camSwayPhase += dt * CC.walkSwayFreq;
+    this.camIdleBreathPhase += dt * CC.idleBreathFreq * Math.PI * 2;
+
+    // Idle timer
+    if (this.camSpeedSmoothed < 0.8 && !this.player.inVehicle) {
+      this.camIdleTimer += dt;
+    } else {
+      this.camIdleTimer = 0;
+    }
+
+    // ── 4. Shake decay ──
+    if (this.camShakeIntensity > 0) {
+      this.camShakeIntensity = Math.max(0, this.camShakeIntensity - dt * CC.driveShakeDecayRate);
+    }
+
+    // ── 5. Yaw management ──
+    // Clamp pitch
+    this.cameraPitch = Math.max(CC.pitchClampMin, Math.min(CC.pitchClampMax, this.cameraPitch));
+
+    if (this.player.inVehicle) {
+      // DRIVING: camera follows vehicle direction with cinematic lag
+      const vehicle = this.getOccupiedVehicle();
+      if (vehicle && Math.abs(vehicle.speed) > 0.8 && this.mouseIdleTimer > 0.25) {
+        const speedFactor = Math.min(1, Math.abs(vehicle.speed) / vehicle.maxSpeed);
+        const lagStrength = CC.driveTurnLag + speedFactor * 1.5;
+        // Camera must sit BEHIND the vehicle: offset by PI since vehicle forward
+        // is (sin(dir), cos(dir)) but camera offset is also in (sin(yaw), cos(yaw)).
+        this.cameraYaw = this.rotateTowards(this.cameraYaw, vehicle.direction + Math.PI, dt * lagStrength);
+      }
+      // Slowly settle pitch for driving
+      this.cameraPitch = this.lerp(this.cameraPitch, 0.12, dt * 2.0);
+    } else if (!this.aiming) {
+      // ON FOOT: gentle yaw follow when sprinting forward and mouse is idle
+      const movingForward = this.keys.has("KeyW") && !this.keys.has("KeyA") && !this.keys.has("KeyD");
+      if (movingForward && this.mouseIdleTimer > 0.65 && this.recentMouseTurn < 0.06) {
+        const followStrength = isSprinting ? CC.yawFollowLag * 1.1 : CC.yawFollowLag * 0.6;
+        // Player faces playerYaw; camera sits behind at playerYaw + PI
+        this.cameraYaw = this.rotateTowards(this.cameraYaw, this.playerYaw + Math.PI, dt * followStrength);
+      }
+    }
+
+    // ── 6. Compute directional vectors ──
     const forwardFlat = new Vector3(-Math.sin(this.cameraYaw), 0, -Math.cos(this.cameraYaw));
     const right = new Vector3(Math.cos(this.cameraYaw), 0, -Math.sin(this.cameraYaw));
 
+    // ── 7. AIM MODE — tight over-the-shoulder ──
     if (this.aiming && !this.player.inVehicle) {
-      const desired = focus
+      const focusAim = this.player.position.clone().setY(this.player.position.y + CC.aimFocusHeight);
+      const desiredAim = focusAim
         .clone()
-        .addScaledVector(right, GAME_CONFIG.aimShoulderOffset || 0.6)
-        .addScaledVector(forwardFlat, -(GAME_CONFIG.aimCameraDistance || 1.8))
-        .add(new Vector3(0, Math.sin(this.cameraPitch) * 1.5, 0));
-      this.cameraCurrent.lerp(desired, 0.24);
-      this.camera.position.copy(this.cameraCurrent);
+        .addScaledVector(right, CC.aimShoulderOffset)
+        .addScaledVector(forwardFlat, -CC.aimDistance)
+        .add(new Vector3(0, CC.aimHeight - CC.aimFocusHeight + Math.sin(this.cameraPitch) * 1.2, 0));
 
-      const aimTarget = focus.clone().addScaledVector(this.getAimDirection(), 24);
-      this.cameraLookAt.lerp(aimTarget, 0.3);
+      // Very tight spring for aim
+      const toDesiredAim = desiredAim.clone().sub(this.cameraCurrent);
+      this.cameraVelocity.addScaledVector(toDesiredAim, dt * CC.aimSpringStrength);
+      this.cameraVelocity.multiplyScalar(Math.max(0, 1 - dt * (CC.aimSpringStrength * CC.aimDamping)));
+      this.cameraCurrent.addScaledVector(this.cameraVelocity, dt * 12);
+
+      this.camera.position.copy(this.cameraCurrent);
+      const aimTarget = focusAim.clone().addScaledVector(this.getAimDirection(), 28);
+      this.cameraLookAt.lerp(aimTarget, CC.aimLookAtLerp);
       this.camera.lookAt(this.cameraLookAt);
-      this.cameraRoll = this.lerp(this.cameraRoll, 0, 0.16);
+      this.cameraRoll = this.lerp(this.cameraRoll, 0, 0.2);
+      this.camera.rotateZ(this.cameraRoll);
+
+      // FOV: tighten for aim
+      this.camFovCurrent = this.lerp(this.camFovCurrent, CC.aimFov, dt * CC.fovLerpSpeed);
+      this.camera.fov = this.camFovCurrent;
+      this.camera.updateProjectionMatrix();
       return;
     }
 
-    const distance = GAME_CONFIG.cameraDistance + 2;
-    const finalDistance = this.player.inVehicle ? distance + 3.4 : distance - 1.2;
-    const cameraShoulder = this.player.inVehicle ? 0.9 : 0.42;
-    const speedLead = this.player.inVehicle
-      ? Math.min(6.5, Math.abs(this.getOccupiedVehicle()?.speed ?? 0) * 0.22)
-      : (this.keys.has("KeyW") ? 2.3 : 0.8);
-    const verticalLag = this.player.inVehicle ? 0.45 : 0.18;
-    const desiredLookAt = focus
-      .clone()
-      .addScaledVector(forwardFlat, this.player.inVehicle ? 4.5 + speedLead : 1.8 + speedLead)
-      .addScaledVector(right, cameraShoulder * 0.18)
-      .add(new Vector3(0, verticalLag, 0));
+    // ── 8. Compute state-dependent camera parameters ──
+    let camDist: number, camHeight: number, camShoulder: number;
+    let focusH: number, lookAhead: number;
+    let springStr: number, dampVal: number, lookAtLerp: number;
+    let targetFov: number;
+    let swayAmp: number, bobAmp: number, bobFreq: number;
+    let targetRoll: number;
 
+    if (this.camMovementState === 'drive') {
+      // ── DRIVING ──
+      const vehicle = this.getOccupiedVehicle();
+      const speed = this.camVehicleSpeedSmoothed;
+      const speedNorm = vehicle ? Math.min(1, speed / vehicle.maxSpeed) : 0;
+      const isBike = vehicle?.vehicleClass === "bike";
+
+      camDist = this.lerp(CC.driveDistanceLow, CC.driveDistanceHigh, speedNorm) * (isBike ? 0.82 : 1);
+      camHeight = this.lerp(CC.driveHeightLow, CC.driveHeightHigh, speedNorm);
+      camShoulder = CC.driveShoulderOffset * (isBike ? 0.5 : 1);
+      focusH = CC.driveFocusHeight;
+      lookAhead = CC.driveLookAhead + speed * CC.driveLookAheadSpeedScale;
+      springStr = CC.driveSpringStrength;
+      dampVal = CC.driveDamping;
+      lookAtLerp = CC.driveLookAtLerp;
+      targetFov = this.lerp(CC.driveFovLow, CC.driveFovHigh, speedNorm);
+      swayAmp = 0;
+      bobAmp = 0;
+      bobFreq = 0;
+
+      // Turn lean: roll into turns like banking
+      const yawDelta = vehicle ? this.angleDiff(this.cameraYaw, vehicle.direction + Math.PI) : 0;
+      targetRoll = MathUtils.clamp(
+        speed * yawDelta * CC.driveTurnLean,
+        -0.06, 0.06
+      );
+
+      // Collision shake (triggered externally via applyDamage or vehicle collision)
+      if (this.camShakeIntensity > 0.01) {
+        targetRoll += Math.sin(this.animationTime * 35) * this.camShakeIntensity * 0.03;
+      }
+
+    } else if (this.camMovementState === 'run') {
+      // ── RUNNING ──
+      camDist = CC.runDistance;
+      camHeight = CC.runHeight;
+      camShoulder = CC.runShoulderOffset;
+      focusH = CC.walkFocusHeight;
+      lookAhead = CC.runLookAhead;
+      springStr = CC.runSpringStrength;
+      dampVal = CC.runDamping;
+      lookAtLerp = CC.runLookAtLerp;
+      targetFov = CC.runFov;
+      swayAmp = CC.runSwayAmplitude;
+      bobAmp = CC.runBobAmplitude;
+      bobFreq = CC.runBobFreq;
+
+      // Turn overshoot: momentum from fast direction changes
+      const yawRate = this.recentMouseTurn;
+      this.camTurnMomentum = this.lerp(this.camTurnMomentum, yawRate * CC.runTurnOvershoot, dt * 4);
+      targetRoll = MathUtils.clamp(
+        this.camTurnMomentum * 0.04 +
+        Math.sin(this.animationTime * 7.2) * 0.003,
+        -0.012, 0.012
+      );
+
+    } else if (this.camMovementState === 'walk') {
+      // ── WALKING ──
+      camDist = CC.walkDistance;
+      camHeight = CC.walkHeight;
+      camShoulder = CC.walkShoulderOffset;
+      focusH = CC.walkFocusHeight;
+      lookAhead = CC.walkLookAhead;
+      springStr = CC.walkSpringStrength;
+      dampVal = CC.walkDamping;
+      lookAtLerp = CC.walkLookAtLerp;
+      targetFov = CC.walkFov;
+      swayAmp = CC.walkSwayAmplitude;
+      bobAmp = CC.walkBobAmplitude;
+      bobFreq = CC.walkBobFreq;
+
+      this.camTurnMomentum = this.lerp(this.camTurnMomentum, 0, dt * 3);
+      targetRoll = MathUtils.clamp(
+        Math.sin(this.camSwayPhase * 2.2) * 0.004,
+        -0.008, 0.008
+      );
+
+    } else {
+      // ── IDLE ──
+      camDist = CC.walkDistance * 0.95;
+      camHeight = CC.walkHeight;
+      camShoulder = CC.walkShoulderOffset;
+      focusH = CC.walkFocusHeight;
+      lookAhead = 0.6; // minimal look-ahead when still
+      springStr = CC.walkSpringStrength * 0.7;
+      dampVal = CC.walkDamping * 1.1;
+      lookAtLerp = CC.walkLookAtLerp * 0.7;
+      targetFov = CC.walkFov;
+      swayAmp = CC.walkSwayAmplitude * 0.5;
+      bobAmp = 0;
+      bobFreq = 0;
+
+      this.camTurnMomentum = this.lerp(this.camTurnMomentum, 0, dt * 5);
+      targetRoll = Math.sin(this.camSwayPhase * 1.3) * 0.002;
+    }
+
+    // ── 9. Focus point (what the camera orbits around) ──
+    const focus = this.player.position.clone().setY(this.player.position.y + focusH);
+
+    // ── 10. Handheld sway & footstep bob ──
+    const swayX = Math.sin(this.camSwayPhase * 3.1) * swayAmp;
+    const swayZ = Math.cos(this.camSwayPhase * 2.3) * swayAmp * 0.6;
+    const bob = bobAmp > 0 ? Math.abs(Math.sin(this.animationTime * bobFreq)) * bobAmp : 0;
+
+    // ── 11. Idle breathing ──
+    let breathX = 0, breathY = 0;
+    if (this.camIdleTimer > CC.idleBreathingDelay) {
+      const breathBlend = Math.min(1, (this.camIdleTimer - CC.idleBreathingDelay) * 0.5);
+      breathX = Math.sin(this.camIdleBreathPhase) * CC.idleBreathAmplitudeX * breathBlend;
+      breathY = Math.sin(this.camIdleBreathPhase * 0.7 + 1.2) * CC.idleBreathAmplitudeY * breathBlend;
+    }
+
+    // ── 12. Look-ahead: smoothed offset in movement direction ──
+    const desiredLookAhead = forwardFlat.clone().multiplyScalar(lookAhead);
+    this.camLookAheadOffset.lerp(desiredLookAhead, dt * 2.5);
+
+    // ── 13. Compute desired camera position ──
     const offset = new Vector3(
-      Math.sin(this.cameraYaw) * Math.cos(this.cameraPitch) * finalDistance - right.x * cameraShoulder,
-      Math.sin(this.cameraPitch) * finalDistance + (GAME_CONFIG.cameraHeight || 1.8) + (this.player.inVehicle ? 0.25 : 0),
-      Math.cos(this.cameraYaw) * Math.cos(this.cameraPitch) * finalDistance - right.z * cameraShoulder
+      Math.sin(this.cameraYaw) * Math.cos(this.cameraPitch) * camDist
+        - right.x * camShoulder
+        + swayX + breathX,
+      Math.sin(this.cameraPitch) * camDist + camHeight + bob + breathY,
+      Math.cos(this.cameraYaw) * Math.cos(this.cameraPitch) * camDist
+        - right.z * camShoulder
+        + swayZ
     );
 
     const desired = focus.clone().add(offset);
-    const springStrength = this.player.inVehicle ? 7.2 : 9.5;
-    const damping = this.player.inVehicle ? 0.8 : 0.75;
+
+    // Collision shake offset
+    if (this.camShakeIntensity > 0.01) {
+      desired.x += Math.sin(this.animationTime * 42) * this.camShakeIntensity * 0.15;
+      desired.y += Math.cos(this.animationTime * 38) * this.camShakeIntensity * 0.08;
+    }
+
+    // ── 14. Spring-damper physics to chase desired position ──
     const toDesired = desired.clone().sub(this.cameraCurrent);
-    this.cameraVelocity.addScaledVector(toDesired, dt * springStrength);
-    this.cameraVelocity.multiplyScalar(Math.max(0, 1 - dt * (springStrength * damping)));
+    this.cameraVelocity.addScaledVector(toDesired, dt * springStr);
+    this.cameraVelocity.multiplyScalar(Math.max(0, 1 - dt * (springStr * dampVal)));
     this.cameraCurrent.addScaledVector(this.cameraVelocity, dt * 9);
 
-    this.cameraLookAt.lerp(desiredLookAt, this.player.inVehicle ? 0.1 : 0.16);
+    // ── 15. Compute look-at target with look-ahead framing ──
+    const desiredLookAtTarget = focus
+      .clone()
+      .add(this.camLookAheadOffset)
+      .addScaledVector(right, camShoulder * 0.15)
+      .add(new Vector3(0, this.player.inVehicle ? 0.4 : 0.15, 0));
+
+    this.cameraLookAt.lerp(desiredLookAtTarget, lookAtLerp);
+
+    // ── 16. Apply camera transform ──
     this.camera.position.copy(this.cameraCurrent);
     this.camera.lookAt(this.cameraLookAt);
-    const targetRoll = this.player.inVehicle
-      ? Math.max(-0.045, Math.min(0.045, (this.getOccupiedVehicle()?.speed ?? 0) * Math.sin(this.cameraYaw - (this.getOccupiedVehicle()?.direction ?? this.cameraYaw)) * 0.004))
-      : Math.max(-0.008, Math.min(0.008, Math.sin(this.animationTime * 7.2) * (this.keys.has("KeyW") ? 0.0045 : 0)));
-    this.cameraRoll = this.lerp(this.cameraRoll, targetRoll, this.player.inVehicle ? 0.08 : 0.14);
+
+    // ── 17. Roll (tilt) ──
+    this.cameraRoll = this.lerp(
+      this.cameraRoll,
+      targetRoll,
+      this.player.inVehicle ? 0.06 : 0.12
+    );
     this.camera.rotateZ(this.cameraRoll);
+
+    // ── 18. FOV breathing ──
+    this.camFovCurrent = this.lerp(this.camFovCurrent, targetFov, dt * CC.fovLerpSpeed);
+    this.camera.fov = this.camFovCurrent;
+    this.camera.updateProjectionMatrix();
+  }
+
+  /** Compute signed angle difference, wrapped to [-PI, PI] */
+  private angleDiff(a: number, b: number): number {
+    let d = b - a;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    return d;
+  }
+
+  /** Trigger a camera impact shake (called on vehicle collision, damage, etc.) */
+  triggerCameraShake(intensity = 0.3) {
+    this.camShakeIntensity = Math.min(1, this.camShakeIntensity + intensity);
   }
 
   private resolveStaticColliders(position: Vector3, radius: number) {
@@ -3063,6 +3399,9 @@ export class GameEngine {
 
       const impactForce = (Math.abs(vehicle.speed) + Math.abs(other.speed)) * (other.mass / 1000);
       if (impactForce > 12) {
+        if (vehicle.occupiedByPlayer) {
+          this.triggerCameraShake(Math.min(0.8, impactForce * 0.02));
+        }
         this.applyVehicleDeformation(vehicle, impactForce);
         vehicle.hp -= impactForce * 0.45;
         vehicle.damageLevel = Math.min(1, 1 - vehicle.hp / vehicle.maxHp);
@@ -3134,6 +3473,9 @@ export class GameEngine {
   }
 
   private applyDamage(amount: number) {
+    if (this.cheatBuffer.endsWith("aspirine")) return;
+    this.triggerCameraShake(Math.min(0.6, amount * 0.02));
+
     let remaining = amount;
 
     if (this.player.armor > 0) {

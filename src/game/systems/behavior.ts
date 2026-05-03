@@ -1,5 +1,6 @@
 import { Vector3 } from "three";
 import type { Collider, NPCBrainState, NPCDailyActivity, PedestrianEntity, PlayerState } from "@/game/types";
+import { NPC_BEHAVIOR_CONFIG } from "@/game/config";
 
 /** ── Threat evaluation thresholds (meters) ── */
 const THREAT_RANGES = {
@@ -37,75 +38,83 @@ const DAILY_ACTIVITY_DURATIONS: Record<NPCDailyActivity, [number, number]> = {
 export function evaluateNPCState(
   pedestrian: PedestrianEntity,
   player: PlayerState,
-  isPlayerThreatening: boolean,
+  playerDisruptionForce: number, // 0 to 100+
+  disruptionPosition: Vector3,
   dt: number
 ): NPCBrainState {
-  const distance = pedestrian.position.distanceTo(player.position);
+  const distance = pedestrian.position.distanceTo(disruptionPosition);
   pedestrian.threatDistance = distance;
 
-  // Increment FSM timer
-  pedestrian.fsmTimer += dt;
+  // 1. Calculate environmental awareness input
+  let awarenessInput = 0;
+  
+  // If player is causing a disruption within radius
+  if (playerDisruptionForce > 0 && distance < playerDisruptionForce) {
+    // Closer = higher intensity awareness
+    awarenessInput = (1 - (distance / playerDisruptionForce)) * 100;
+  }
 
-  // If player is not threatening and far away, go idle
-  if (!isPlayerThreatening && distance > THREAT_RANGES.curious) {
-    if (pedestrian.fsmState !== "idle") {
-      pedestrian.fsmTimer = 0;
-    }
-    return "idle";
+  // Cops always have high awareness of wanted players
+  if (pedestrian.role === "cop" && player.wanted > 0) {
+    awarenessInput = Math.max(awarenessInput, 100);
+  }
+
+  // Apply Line-of-Sight modifier (less aware if they can't see the disruption)
+  if (!pedestrian.hasLineOfSight && awarenessInput > 0) {
+    awarenessInput *= 0.4; // Can still hear/sense it, but muted
+  }
+
+  // 2. Update NPC internal awareness level
+  if (awarenessInput > pedestrian.awarenessLevel) {
+    // Spike awareness quickly when stimulus hits
+    pedestrian.awarenessLevel = Math.min(100, pedestrian.awarenessLevel + awarenessInput * dt * 4);
+  } else {
+    // Decay awareness naturally
+    pedestrian.awarenessLevel = Math.max(0, pedestrian.awarenessLevel - NPC_BEHAVIOR_CONFIG.awareness.decayRate * dt);
+  }
+
+  // 3. Map awareness level to FSM State
+  let newState: NPCBrainState = "unaware";
+  if (pedestrian.awarenessLevel >= NPC_BEHAVIOR_CONFIG.awareness.alertToPanicked) {
+    newState = "panicked";
+  } else if (pedestrian.awarenessLevel >= NPC_BEHAVIOR_CONFIG.awareness.curiousToAlert) {
+    newState = "alert";
+  } else if (pedestrian.awarenessLevel >= NPC_BEHAVIOR_CONFIG.awareness.unawareToCurious) {
+    newState = "curious";
+  } else if (pedestrian.awarenessLevel > 0) {
+    newState = "idle";
+  } else {
+    newState = "unaware";
+  }
+
+  // 4. State transition logic & Timers
+  if (newState !== pedestrian.fsmState) {
+    pedestrian.fsmTimer = 0;
+  } else {
+    pedestrian.fsmTimer += dt;
   }
 
   // ── P1: Self-Preservation ──
-  // If NPC has been panicked for over 12 seconds, seek cover
-  if (
-    pedestrian.fsmState === "panicked" &&
-    pedestrian.fsmTimer > SELF_PRESERVATION_THRESHOLD
-  ) {
+  // If panicked for too long, switch to deep cover/survival
+  if (pedestrian.fsmState === "panicked" && pedestrian.fsmTimer > SELF_PRESERVATION_THRESHOLD) {
     pedestrian.fsmTimer = 0;
     return "selfPreservation";
   }
-
-  // Already in self-preservation? Stay until threat clears
   if (pedestrian.fsmState === "selfPreservation") {
-    if (!isPlayerThreatening || distance > THREAT_RANGES.curious) {
+    // Only exit self-preservation if threat goes away significantly
+    if (pedestrian.awarenessLevel < NPC_BEHAVIOR_CONFIG.awareness.curiousToAlert) {
       pedestrian.fsmTimer = 0;
       return "idle";
     }
     return "selfPreservation";
   }
 
-  // ── P2: Threat Assessment ──
-  if (isPlayerThreatening) {
-    // Direct weapon threat within 25m → Panic
-    if (distance < THREAT_RANGES.panicked) {
-      if (pedestrian.fsmState !== "panicked") {
-        pedestrian.fsmTimer = 0;
-      }
-      return "panicked";
-    }
-
-    // Commotion/explosion within 50m → Alarmed
-    if (distance < THREAT_RANGES.alarmed) {
-      if (pedestrian.fsmState !== "alarmed") {
-        pedestrian.fsmTimer = 0;
-      }
-      return "alarmed";
-    }
-
-    // Distant activity within 100m → Curious
-    if (distance < THREAT_RANGES.curious) {
-      if (pedestrian.fsmState !== "curious") {
-        pedestrian.fsmTimer = 0;
-      }
-      return "curious";
-    }
-  }
-
-  // Panic timer still active? Keep running
+  // Physical panic timer override (e.g., getting hit by a car)
   if (pedestrian.panicTimer > 0) {
     return "panicked";
   }
 
-  return "idle";
+  return newState;
 }
 
 /**
@@ -132,16 +141,17 @@ export function fsmToLegacyState(
   }
 
   switch (brainState) {
+    case "unaware":
     case "idle":
-      // Check if NPC should be doing a daily activity
       if (pedestrian.dailyActivityTimer > 0) {
         return "daily_activity";
       }
       return "wander";
     case "curious":
       return "observe";
+    case "alert":
     case "alarmed":
-      // Alarmed NPCs back away slowly while observing
+      // Alert NPCs step aside and watch
       return "observe";
     case "panicked":
       return getPanicReaction(pedestrian);
@@ -177,10 +187,14 @@ export function getCarjackReaction(pedestrian: PedestrianEntity): PedestrianEnti
 export function getAttackReaction(pedestrian: PedestrianEntity): PedestrianEntity["state"] {
   switch (pedestrian.archetype) {
     case "aggressive":
+    case "criminal":
       return "attack"; // Fight back
     case "hustler":
       return Math.random() > 0.5 ? "attack" : "flee"; // Run but might retaliate
     case "cautious":
+    case "local":
+    case "worker":
+    case "vendor":
       return "flee"; // Run and seek cover
     case "tourist":
       return "duck"; // Better to cower
@@ -202,6 +216,7 @@ export function getPanicReaction(pedestrian: PedestrianEntity): PedestrianEntity
   const roll = Math.random();
   switch (pedestrian.archetype) {
     case "aggressive":
+    case "criminal":
       if (roll < 0.2) return "attack";
       if (roll < 0.5) return "duck";
       return "flee";
@@ -209,8 +224,10 @@ export function getPanicReaction(pedestrian: PedestrianEntity): PedestrianEntity
       if (roll < 0.4) return "duck";
       return "flee";
     case "hustler":
-      return "flee";
     case "cautious":
+    case "local":
+    case "worker":
+    case "vendor":
       return "flee";
     default:
       return "flee";

@@ -152,6 +152,33 @@ export const NPC_CRIME_CONFIG = {
   policeNoticeRange: 40
 } as const;
 
+/** ── NPC "Controlled Chaos" Behavior Config ── */
+export const NPC_BEHAVIOR_CONFIG = {
+  awareness: {
+    unawareToCurious: 20, // Threshold to start paying attention
+    curiousToAlert: 50,   // Threshold to step aside/react
+    alertToPanicked: 85,  // Threshold to flee/scream
+    decayRate: 15,        // Awareness drops per second when no stimulus
+  },
+  disruptionRadii: {
+    walk: 2,
+    run: 8,
+    sprint: 15,
+    driveNormal: 25,
+    driveReckless: 45,
+    combat: 80
+  },
+  socialRippleRadius: 18,
+  socialRippleChance: 0.6
+} as const;
+
+/** ── Traffic Behavior Config ── */
+export const TRAFFIC_BEHAVIOR_CONFIG = {
+  panicBrakeDistance: 12,
+  swerveChance: 0.35,
+  stressThreshold: 50
+} as const;
+
 /** ── Shop config ── */
 export const SHOP_CONFIG = {
   interactionRange: 4.5,
@@ -214,6 +241,88 @@ export const GAME_CONFIG = {
   minimapSize: 100,
   mouseSensitivityOptions: [0.8, 1, 1.25] as const,
   densityOptions: [0.75, 1, 1.35] as const
+} as const;
+
+/** ── Cinematic Vice City Camera Tuning ── */
+export const CAMERA_CINEMATIC = {
+  // ── Walk State — "Casual Control" ──
+  // Relaxed third-person distance, slightly behind and offset.
+  // Movement is soft, slightly delayed — camera gently catches up.
+  walkDistance: 7.2,           // camera distance behind player (closer = more intimate)
+  walkHeight: 2.6,             // camera height above player (low = behind-shoulder feel)
+  walkShoulderOffset: 0.65,    // asymmetric framing offset (cinematic interest)
+  walkFocusHeight: 1.4,        // where camera looks at (player upper torso)
+  walkLookAhead: 2.8,          // how far ahead of movement camera looks
+  walkSpringStrength: 4.8,     // softer chase for gentle catch-up feel
+  walkDamping: 0.68,           // lower = more floaty/loose
+  walkLookAtLerp: 0.08,        // slow look-at = smooth settling
+  walkSwayAmplitude: 0.022,    // handheld micro-drift (subtle human feel)
+  walkSwayFreq: 1.4,           // sway oscillation speed (slow, organic)
+  walkBobAmplitude: 0.010,     // vertical step-bob amplitude (very subtle)
+  walkBobFreq: 5.6,            // step-bob frequency (synced to walk cycle)
+  walkFov: 64,                 // slightly narrow for intimate framing
+
+  // ── Run State — "Momentum and Urgency" ──
+  // Camera pulls back, tighter response, trace of inertia.
+  // Slight backward drag as speed increases.
+  runDistance: 8.8,            // pulls back for wider view
+  runHeight: 3.0,              // slightly higher to show more ground
+  runShoulderOffset: 0.35,     // less offset at speed (more centered)
+  runLookAhead: 4.5,           // much further look-ahead (anticipation)
+  runSpringStrength: 7.2,      // tighter following but still has weight
+  runDamping: 0.62,            // less damping = more momentum/swing
+  runLookAtLerp: 0.12,         // faster look-at tracking
+  runSwayAmplitude: 0.005,     // reduced sway at speed
+  runBobAmplitude: 0.024,      // more pronounced footstep bob
+  runBobFreq: 8.2,             // faster bob for run cycle
+  runFov: 72,                  // wider FOV for speed perception
+  runTurnOvershoot: 0.14,      // camera slightly overshoots on fast turns
+
+  // ── Drive State — "Cinematic Velocity" ──
+  // Wider, lower angle behind car. Emphasizes speed and road flow.
+  // Camera leans into turns, pulls back at high speed.
+  driveDistanceLow: 10.5,      // distance at low speed (clear surroundings)
+  driveDistanceHigh: 14.0,     // distance at high speed (pulls back)
+  driveHeightLow: 3.0,         // height at low speed (slightly elevated)
+  driveHeightHigh: 2.2,        // height at high speed (drops for velocity)
+  driveShoulderOffset: 0.8,    // asymmetric framing for cars
+  driveFocusHeight: 1.6,       // look at vehicle center
+  driveLookAhead: 6.0,         // strong look-ahead for roads
+  driveLookAheadSpeedScale: 0.4, // extra look-ahead per speed unit
+  driveSpringStrength: 4.5,    // looser spring (cinematic lag)
+  driveDamping: 0.58,          // more drift/swing for cinematic feel
+  driveLookAtLerp: 0.065,      // slow look-at = world slides past
+  driveTurnLean: 0.06,         // camera roll into turns (banking)
+  driveTurnLag: 2.0,           // yaw follow speed (lower = more lag behind car)
+  driveFovLow: 66,             // FOV at low speed
+  driveFovHigh: 80,            // FOV at high speed (speed perception)
+  driveCollisionShake: 0.4,    // shake intensity on collision
+  driveShakeDecayRate: 3.5,    // how fast shake fades (slower = more impact)
+
+  // ── Aim State — "Precision Focus" ──
+  aimDistance: 4.5,             // close OTS distance
+  aimHeight: 2.2,              // at shoulder height
+  aimShoulderOffset: 1.5,      // strong OTS offset
+  aimFocusHeight: 1.55,        // look at player shoulder
+  aimSpringStrength: 15.0,     // very responsive when aiming
+  aimDamping: 0.88,            // tight damping
+  aimLookAtLerp: 0.30,         // fast look-at
+  aimFov: 52,                  // narrow FOV for precision feel
+
+  // ── Idle Breathing — "The Camera Breathes" ──
+  // Very subtle drifting keeps the frame from feeling static.
+  idleBreathingDelay: 2.0,     // seconds before breathing starts
+  idleBreathAmplitudeX: 0.10,  // horizontal drift (slightly more alive)
+  idleBreathAmplitudeY: 0.06,  // vertical drift
+  idleBreathFreq: 0.35,        // breathing frequency (slow, organic)
+  idleRecenterSpeed: 0.25,     // how fast camera recenters on idle
+
+  // ── Transitions — "Seamless Continuity" ──
+  stateBlendSpeed: 2.5,        // smooth blend between states (not instant)
+  fovLerpSpeed: 3.0,           // smooth FOV changes
+  yawFollowLag: 1.6,           // base yaw follow speed for on-foot
+  pitchClampMin: -0.20,        // min pitch angle (slight look up)
+  pitchClampMax: 0.55,         // max pitch angle (less extreme overhead)
 } as const;
 
 export const WEAPONS = {

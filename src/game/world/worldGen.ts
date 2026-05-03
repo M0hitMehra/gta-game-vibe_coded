@@ -654,6 +654,11 @@ function addImportedBuilding(
   targetHeight: number
 ) {
   const cloned = model.clone();
+  // Source models are hidden to prevent giant-object-at-origin bug.
+  // Clones inherit visible=false — restore visibility on all children.
+  cloned.visible = true;
+  cloned.traverse((child: any) => { child.visible = true; });
+
   const bounds = new Box3().setFromObject(cloned);
   const size = new Vector3();
   const centerOffset = new Vector3();
