@@ -241,6 +241,50 @@ a {
   color: var(--danger);
 }
 
+.status-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(5, 10, 18, 0.72);
+  backdrop-filter: blur(12px);
+  pointer-events: none;
+  z-index: 35;
+}
+
+.status-card {
+  width: min(520px, calc(100vw - 40px));
+  padding: 30px 28px;
+  border-radius: 28px;
+  text-align: center;
+  background: linear-gradient(180deg, rgba(22, 14, 18, 0.96), rgba(10, 16, 24, 0.96));
+  border: 1px solid rgba(255, 105, 97, 0.26);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.48);
+}
+
+.status-title {
+  font-size: clamp(2.3rem, 7vw, 4rem);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #ffd3cf;
+}
+
+.status-message {
+  margin-top: 12px;
+  color: var(--text);
+  font-size: 1rem;
+  line-height: 1.7;
+}
+
+.status-countdown {
+  margin-top: 16px;
+  color: var(--warn);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-size: 0.82rem;
+}
+
 .overlay {
   position: absolute;
   inset: 0;
@@ -373,6 +417,69 @@ a {
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 12px;
   margin-top: 24px;
+}
+
+.character-picker {
+  margin-top: 28px;
+  display: grid;
+  gap: 16px;
+}
+
+.character-picker-copy .subtitle {
+  margin: 8px 0 0;
+}
+
+.character-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.character-card {
+  pointer-events: auto;
+  text-align: left;
+  padding: 16px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease,
+    background 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.character-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(124, 232, 255, 0.24);
+}
+
+.character-card.active {
+  border-color: rgba(245, 120, 69, 0.55);
+  background: linear-gradient(180deg, rgba(245, 120, 69, 0.16), rgba(124, 232, 255, 0.08));
+  box-shadow: 0 16px 40px rgba(245, 120, 69, 0.14);
+}
+
+.character-vibe {
+  color: rgba(124, 232, 255, 0.84);
+  font-size: 0.72rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+.character-name {
+  margin-top: 10px;
+  font-size: 1.08rem;
+  letter-spacing: 0.04em;
+}
+
+.character-desc {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.55;
 }
 
 .guide-card {

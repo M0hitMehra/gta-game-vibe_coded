@@ -136,6 +136,18 @@ export function Hud({ hud, onTogglePause, onCycleSetting, onPurchaseItem }: HudP
         <div className={`notification ${hud.notification.tone}`}>{hud.notification.message}</div>
       ) : null}
 
+      {hud.statusOverlay ? (
+        <div className="status-overlay">
+          <div className="status-card">
+            <div className="status-title">{hud.statusOverlay.title}</div>
+            <div className="status-message">{hud.statusOverlay.message}</div>
+            <div className="status-countdown">
+              Respawning in {hud.statusOverlay.countdown}s
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {hud.isAiming ? (
         <div className="crosshair">
           <span />

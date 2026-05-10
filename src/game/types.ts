@@ -2,6 +2,7 @@ import type { AnimationAction, AnimationClip, AnimationMixer, Group, Mesh, Vecto
 
 export type WeaponId = "fists" | "pistol" | "smg" | "shotgun";
 export type NoticeTone = "info" | "success" | "danger";
+export type CharacterVariantId = "street" | "soldier" | "xbot";
 export type VehicleClass = "car" | "bike" | "ev" | "muscle" | "suv";
 export type VehicleKind = "civilian" | "police";
 export type PedestrianRole = "civilian" | "cop" | "driver";
@@ -169,6 +170,11 @@ export type HudSnapshot = {
     message: string;
     tone: NoticeTone;
   } | null;
+  statusOverlay: {
+    title: string;
+    message: string;
+    countdown: number;
+  } | null;
   /** Shop UI state */
   shopMenu: {
     open: boolean;
@@ -223,6 +229,10 @@ export type PlayerState = {
   runAction?: AnimationAction;
   aimAction?: AnimationAction;
   shootAction?: AnimationAction;
+  crouchAction?: AnimationAction;
+  meleeAction?: AnimationAction;
+  hurtAction?: AnimationAction;
+  deathAction?: AnimationAction;
 };
 
 /** Vehicle damage dent record */
@@ -340,12 +350,17 @@ export type PedestrianEntity = {
   influencedBy: string | null;
   /** Current awareness scale (0-100) */
   awarenessLevel: number;
+  characterVariantId?: CharacterVariantId;
   mixer?: AnimationMixer;
   idleAction?: AnimationAction;
   walkAction?: AnimationAction;
   runAction?: AnimationAction;
   aimAction?: AnimationAction;
   shootAction?: AnimationAction;
+  crouchAction?: AnimationAction;
+  meleeAction?: AnimationAction;
+  hurtAction?: AnimationAction;
+  deathAction?: AnimationAction;
 };
 
 export type ExternalSceneAsset = {

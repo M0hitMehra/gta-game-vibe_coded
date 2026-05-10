@@ -3,7 +3,33 @@
 import { useEffect, useRef, useState } from "react";
 import { Hud } from "@/components/Hud";
 import { GameEngine } from "@/game/GameEngine";
-import type { HudSnapshot } from "@/game/types";
+import type { CharacterVariantId, HudSnapshot } from "@/game/types";
+
+const characterChoices: {
+  id: CharacterVariantId;
+  name: string;
+  vibe: string;
+  description: string;
+}[] = [
+    {
+      id: "street",
+      name: "Street Enforcer",
+      vibe: "Gun-ready brawler",
+      description: "Uses the richest combat-ready animation set: aiming, shooting, punches, kicks, hits, and death."
+    },
+    {
+      id: "soldier",
+      name: "Frontline Runner",
+      vibe: "Fast tactical silhouette",
+      description: "A distinct imported GLB soldier from the web, great for sprinting and patrol-style movement."
+    },
+    {
+      id: "xbot",
+      name: "Night Sneak",
+      vibe: "Stealthy urban drifter",
+      description: "An imported GLB with sneak and sad/scared-style poses for more personality in the city."
+    }
+  ];
 
 const initialHud: HudSnapshot = {
   health: 100,
@@ -21,6 +47,7 @@ const initialHud: HudSnapshot = {
   debug: "Renderer idle",
   inVehicle: false,
   isAiming: false,
+  statusOverlay: null,
   notification: null,
   digitalFootprint: 0,
   shopMenu: {
@@ -55,6 +82,7 @@ export function GameShell() {
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [loadingLabel, setLoadingLabel] = useState("Initializing...");
   const [isLoading, setIsLoading] = useState(false);
+  const [selectedCharacter, setSelectedCharacter] = useState<CharacterVariantId>("street");
 
   useEffect(() => {
     if (!canvasRef.current) {
@@ -63,6 +91,7 @@ export function GameShell() {
 
     const engine = new GameEngine({
       canvas: canvasRef.current,
+      playerCharacter: selectedCharacter,
       onHudChange: setHud,
       onLoadProgress: (progress: number, label: string) => {
         setLoadingProgress(progress);
@@ -76,7 +105,7 @@ export function GameShell() {
       engine.stop();
       engineRef.current = null;
     };
-  }, []);
+  }, [selectedCharacter]);
 
   const handleStart = async () => {
     if (!engineRef.current) {
@@ -146,6 +175,29 @@ export function GameShell() {
                 <div className="chip">Drivers + Carjacking</div>
                 <div className="chip">Pause + Settings</div>
                 <div className="chip">Cheat Codes</div>
+              </div>
+
+              <div className="character-picker">
+                <div className="character-picker-copy">
+                  <div className="eyebrow">Choose Your Character</div>
+                  <p className="subtitle">
+                    Your selected character becomes player-exclusive. Ambient civilians will be drawn from the remaining character pool so your hero does not show up as a random NPC.
+                  </p>
+                </div>
+                <div className="character-card-grid">
+                  {characterChoices.map((choice) => (
+                    <button
+                      key={choice.id}
+                      type="button"
+                      className={`character-card ${selectedCharacter === choice.id ? "active" : ""}`}
+                      onClick={() => setSelectedCharacter(choice.id)}
+                    >
+                      <div className="character-vibe">{choice.vibe}</div>
+                      <div className="character-name">{choice.name}</div>
+                      <div className="character-desc">{choice.description}</div>
+                    </button>
+                  ))}
+                </div>
               </div>
 
               <div className="action-row">

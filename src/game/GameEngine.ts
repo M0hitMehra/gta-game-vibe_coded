@@ -47,6 +47,7 @@ import { ParticleSystem } from "@/game/systems/particles";
 import type {
   Archetype,
   BulletRecord,
+  CharacterVariantId,
   Collider,
   DestructibleProp,
   EngineEvents,
@@ -74,6 +75,7 @@ import { buildWorld } from "@/game/world/worldGen";
 
 type GameEngineOptions = {
   canvas: HTMLCanvasElement;
+  playerCharacter: CharacterVariantId;
   onHudChange: (hud: HudSnapshot) => void;
   onLoadProgress?: (progress: number, label: string) => void;
 };
@@ -83,6 +85,7 @@ const AMBIENT_ARCHETYPES: Archetype[] = ["cautious", "tourist", "hustler", "aggr
 
 export class GameEngine {
   private readonly canvas: HTMLCanvasElement;
+  private readonly playerCharacter: CharacterVariantId;
   private readonly onHudChange: (hud: HudSnapshot) => void;
   private readonly onLoadProgress: (progress: number, label: string) => void;
   private readonly events = new EventBus<EngineEvents>();
@@ -151,6 +154,7 @@ export class GameEngine {
   private worldTime = 0.44;
   private originOffset = new Vector3();
   private notification: HudSnapshot["notification"] = null;
+  private statusOverlay: HudSnapshot["statusOverlay"] = null;
   private notificationUntil = 0;
   private saveScheduled = 0;
   private policeSpawnTimer = 0;
@@ -172,6 +176,9 @@ export class GameEngine {
   private activeShopId: string | null = null;
   private introGraceTimer = 12;
   private animationTime = 0;
+  private bustedMeter = 0;
+  private respawnTimer = 0;
+  private pendingRespawn: { title: string; message: string; tone: "danger" | "info" } | null = null;
 
   private settings = {
     mouseSensitivityIndex: 1,
@@ -182,6 +189,8 @@ export class GameEngine {
 
   private externalModels: {
     character: { scene: Group; animations: AnimationClip[] } | null;
+    soldier: { scene: Group; animations: AnimationClip[] } | null;
+    xbot: { scene: Group; animations: AnimationClip[] } | null;
     car: { scene: Group } | null;
     car2: { scene: Group } | null;
     policeCar: { scene: Group } | null;
@@ -197,6 +206,8 @@ export class GameEngine {
     cityBuildingMid: { scene: Group } | null;
   } = {
       character: null,
+      soldier: null,
+      xbot: null,
       car: null,
       car2: null,
       policeCar: null,
@@ -213,8 +224,9 @@ export class GameEngine {
     };
   private modelsLoaded = false;
 
-  constructor({ canvas, onHudChange, onLoadProgress }: GameEngineOptions) {
+  constructor({ canvas, playerCharacter, onHudChange, onLoadProgress }: GameEngineOptions) {
     this.canvas = canvas;
+    this.playerCharacter = playerCharacter;
     this.onHudChange = onHudChange;
     this.onLoadProgress = onLoadProgress ?? (() => { });
 
@@ -1175,7 +1187,9 @@ export class GameEngine {
       crimeTargetId: null,
       crimeCooldown: 0,
       pursuitTarget: null,
-      pursuitTargetId: null
+      pursuitTargetId: null,
+      influencedBy: null,
+      awarenessLevel: 0
     };
 
     this.pedestrians.push(pedestrian);
@@ -1239,7 +1253,7 @@ export class GameEngine {
 
       this.captureCheatInput(event);
 
-      if (this.paused) {
+      if (this.paused || this.respawnTimer > 0) {
         return;
       }
 
@@ -1269,7 +1283,7 @@ export class GameEngine {
     };
 
     const onMouseDown = (event: MouseEvent) => {
-      if (this.paused) {
+      if (this.paused || this.respawnTimer > 0) {
         return;
       }
 
@@ -1294,7 +1308,7 @@ export class GameEngine {
     };
 
     const onMouseMove = (event: MouseEvent) => {
-      if (this.paused || document.pointerLockElement !== this.canvas) {
+      if (this.paused || this.respawnTimer > 0 || document.pointerLockElement !== this.canvas) {
         return;
       }
 
@@ -1343,6 +1357,8 @@ export class GameEngine {
 
     type ModelKey =
       | "character"
+      | "soldier"
+      | "xbot"
       | "car"
       | "car2"
       | "policeCar"
@@ -1363,6 +1379,8 @@ export class GameEngine {
       | "bldRoof";
     const modelDefs: { key: ModelKey; path: string; label: string; scale: number; hasAnims?: boolean }[] = [
       { key: "character", path: "/models/character.glb", label: "Main Character", scale: 1.08, hasAnims: true },
+      { key: "soldier", path: "/models/internet/soldier.glb", label: "Soldier Character", scale: 1.0, hasAnims: true },
+      { key: "xbot", path: "/models/internet/xbot.glb", label: "Xbot Character", scale: 1.0, hasAnims: true },
       { key: "car", path: "/models/car.glb", label: "Car", scale: 1.0 },
       { key: "car2", path: "/models/car-2.glb", label: "Car Variant", scale: 1.0 },
       { key: "policeCar", path: "/models/police-car.glb", label: "Police Car", scale: 1.0 },
@@ -1556,9 +1574,89 @@ export class GameEngine {
     vehicle.wheelMeshes.length = 0;
   }
 
+  private playerCharacterSource() {
+    const requested =
+      this.playerCharacter === "soldier"
+        ? this.externalModels.soldier
+        : this.playerCharacter === "xbot"
+          ? this.externalModels.xbot
+          : this.externalModels.character;
+    return requested ?? this.externalModels.character ?? this.externalModels.soldier ?? this.externalModels.xbot;
+  }
+
+  private civilianCharacterSources() {
+    const roster: Array<{ id: CharacterVariantId; scene: Group; animations: AnimationClip[] }> = [];
+    const maybePush = (
+      id: CharacterVariantId,
+      asset: { scene: Group; animations: AnimationClip[] } | null
+    ) => {
+      if (!asset || id === this.playerCharacter) {
+        return;
+      }
+      roster.push({ id, scene: asset.scene, animations: asset.animations });
+    };
+
+    maybePush("street", this.externalModels.character);
+    maybePush("soldier", this.externalModels.soldier);
+    maybePush("xbot", this.externalModels.xbot);
+
+    if (roster.length === 0) {
+      const fallback = this.playerCharacterSource();
+      if (fallback) {
+        roster.push({ id: this.playerCharacter, scene: fallback.scene, animations: fallback.animations });
+      }
+    }
+
+    return roster;
+  }
+
+  private pickCivilianCharacterSource() {
+    const roster = this.civilianCharacterSources();
+    return roster[Math.floor(Math.random() * roster.length)] ?? null;
+  }
+
+  private buildCharacterActionSet(mixer: AnimationMixer, animations: AnimationClip[]) {
+    const idleClip = this.pickAnimationClip(animations, ["idle_gun", "idle_neutral", "idle", "stand"]);
+    const runClip = this.pickAnimationClip(animations, ["run", "run_shoot", "sprint"]);
+    const walkClip = this.pickAnimationClip(animations, ["walk", "run"]);
+    const aimClip = this.pickAnimationClip(animations, ["idle_gun_pointing", "aim", "rifle", "pistol", "idle_gun", "sneak_pose", "idle"]);
+    const shootClip = this.pickAnimationClip(animations, ["gun_shoot", "idle_gun_shoot", "run_shoot", "shoot", "fire", "attack"]);
+    const crouchClip = this.pickAnimationClip(animations, ["crouch", "duck", "sneak_pose", "roll", "kneel"]);
+    const meleeClip = this.pickAnimationClip(animations, ["punch_left", "punch_right", "kick_left", "kick_right", "sword_slash", "attack"]);
+    const hurtClip = this.pickAnimationClip(animations, ["hitrecieve", "sad_pose", "scared", "fear", "hit"]);
+    const deathClip = this.pickAnimationClip(animations, ["death", "die"]);
+
+    const idleAction = idleClip ? mixer.clipAction(idleClip) : undefined;
+    const runAction = runClip ? mixer.clipAction(runClip) : undefined;
+    const walkAction = walkClip ? mixer.clipAction(walkClip) : undefined;
+    const aimAction = aimClip ? mixer.clipAction(aimClip) : undefined;
+    const shootAction = shootClip ? mixer.clipAction(shootClip) : undefined;
+    const crouchAction = crouchClip ? mixer.clipAction(crouchClip) : undefined;
+    const meleeAction = meleeClip ? mixer.clipAction(meleeClip) : undefined;
+    const hurtAction = hurtClip ? mixer.clipAction(hurtClip) : undefined;
+    const deathAction = deathClip ? mixer.clipAction(deathClip) : undefined;
+
+    if (idleAction) {
+      idleAction.play();
+    }
+
+    return {
+      idleAction,
+      runAction,
+      walkAction,
+      aimAction,
+      shootAction,
+      crouchAction,
+      meleeAction,
+      hurtAction,
+      deathAction
+    };
+  }
+
   private applyCharacterModelToPlayer() {
-    if (!this.externalModels.character) return;
-    const { scene, animations } = this.externalModels.character;
+    const source = this.playerCharacterSource();
+    if (!source) return;
+    const { scene, animations } = source;
     const cloned = cloneSkinned(scene) as Group;
     // Ensure clone is visible (source models are hidden to prevent giant gun bug)
     cloned.visible = true;
@@ -1581,25 +1679,7 @@ export class GameEngine {
     cloned.rotation.y = 0;
 
     const mixer = new AnimationMixer(cloned);
-    let idleAction: AnimationAction | undefined;
-    let runAction: AnimationAction | undefined;
-    let walkAction: AnimationAction | undefined;
-    let aimAction: AnimationAction | undefined;
-    let shootAction: AnimationAction | undefined;
-
-    if (animations.length > 0) {
-      const idleClip = this.pickAnimationClip(animations, ["idle", "stand"]);
-      const runClip = this.pickAnimationClip(animations, ["run", "sprint"]);
-      const walkClip = this.pickAnimationClip(animations, ["walk", "run"]);
-      const aimClip = this.pickAnimationClip(animations, ["aim", "rifle", "pistol", "idle"]);
-      const shootClip = this.pickAnimationClip(animations, ["shoot", "fire", "attack", "punch", "aim"]);
-
-      if (idleClip) { idleAction = mixer.clipAction(idleClip); idleAction.play(); }
-      if (runClip) { runAction = mixer.clipAction(runClip); }
-      if (walkClip) { walkAction = mixer.clipAction(walkClip); }
-      if (aimClip) { aimAction = mixer.clipAction(aimClip); }
-      if (shootClip) { shootAction = mixer.clipAction(shootClip); }
-    }
+    const actionSet = this.buildCharacterActionSet(mixer, animations);
 
     const oldGroup = this.player.mesh;
     while (oldGroup.children.length > 0) {
@@ -1612,16 +1692,25 @@ export class GameEngine {
     oldGroup.add(cloned);
 
     this.player.mixer = mixer;
-    if (idleAction) this.player.idleAction = idleAction;
-    if (runAction) this.player.runAction = runAction;
-    if (walkAction) this.player.walkAction = walkAction;
-    if (aimAction) this.player.aimAction = aimAction;
-    if (shootAction) this.player.shootAction = shootAction;
+    this.player.idleAction = actionSet.idleAction;
+    this.player.runAction = actionSet.runAction;
+    this.player.walkAction = actionSet.walkAction;
+    this.player.aimAction = actionSet.aimAction;
+    this.player.shootAction = actionSet.shootAction;
+    this.player.crouchAction = actionSet.crouchAction;
+    this.player.meleeAction = actionSet.meleeAction;
+    this.player.hurtAction = actionSet.hurtAction;
+    this.player.deathAction = actionSet.deathAction;
   }
 
   private applyCharacterModelToPed(ped: PedestrianEntity) {
     const usePoliceModel = ped.role === "cop" && this.externalModels.policeOfficer;
-    const source = usePoliceModel ? this.externalModels.policeOfficer : this.externalModels.character;
+    const civilianSource = this.pickCivilianCharacterSource();
+    const source = usePoliceModel
+      ? this.externalModels.policeOfficer
+      : civilianSource
+        ? { scene: civilianSource.scene, animations: civilianSource.animations }
+        : this.playerCharacterSource();
     if (!source) return;
 
     const cloned = usePoliceModel ? source.scene.clone() : cloneSkinned(source.scene) as Group;
@@ -1646,24 +1735,8 @@ export class GameEngine {
     cloned.rotation.y = 0;
 
     const mixer = animations.length > 0 ? new AnimationMixer(cloned) : undefined;
-    let idleAction: AnimationAction | undefined;
-    let runAction: AnimationAction | undefined;
-    let walkAction: AnimationAction | undefined;
-    let aimAction: AnimationAction | undefined;
-    let shootAction: AnimationAction | undefined;
-
-    if (mixer && animations.length > 0) {
-      const idleClip = this.pickAnimationClip(animations, ["idle", "stand"]);
-      const runClip = this.pickAnimationClip(animations, ["run", "sprint"]);
-      const walkClip = this.pickAnimationClip(animations, ["walk", "run"]);
-      const aimClip = this.pickAnimationClip(animations, ["aim", "rifle", "pistol", "idle"]);
-      const shootClip = this.pickAnimationClip(animations, ["shoot", "fire", "attack", "punch", "aim"]);
-
-      if (idleClip) { idleAction = mixer.clipAction(idleClip); }
-      if (runClip) { runAction = mixer.clipAction(runClip); }
-      if (walkClip) { walkAction = mixer.clipAction(walkClip); walkAction.play(); }
-      if (aimClip) { aimAction = mixer.clipAction(aimClip); }
-      if (shootClip) { shootAction = mixer.clipAction(shootClip); }
+    const actionSet = mixer ? this.buildCharacterActionSet(mixer, animations) : null;
+    if (mixer) {
       mixer.setTime(Math.random() * 2);
     }
 
@@ -1678,12 +1751,19 @@ export class GameEngine {
 
     oldGroup.add(cloned);
 
+    ped.characterVariantId = usePoliceModel
+      ? undefined
+      : civilianSource?.id ?? this.playerCharacter;
     ped.mixer = mixer;
-    ped.idleAction = idleAction;
-    ped.runAction = runAction;
-    ped.walkAction = walkAction;
-    ped.aimAction = aimAction;
-    ped.shootAction = shootAction;
+    ped.idleAction = actionSet?.idleAction;
+    ped.runAction = actionSet?.runAction;
+    ped.walkAction = actionSet?.walkAction;
+    ped.aimAction = actionSet?.aimAction;
+    ped.shootAction = actionSet?.shootAction;
+    ped.crouchAction = actionSet?.crouchAction;
+    ped.meleeAction = actionSet?.meleeAction;
+    ped.hurtAction = actionSet?.hurtAction;
+    ped.deathAction = actionSet?.deathAction;
   }
 
   private preventContextMenu = (event: Event) => {
@@ -1731,6 +1811,7 @@ export class GameEngine {
     this.recentMouseTurn = Math.max(0, this.recentMouseTurn - dt * 1.8);
     this.player.shootCooldown = Math.max(0, this.player.shootCooldown - dt);
     this.policeSpawnTimer = Math.max(0, this.policeSpawnTimer - dt);
+    this.updateRespawnState(dt);
     this.updatePlayer(dt);
     this.updateVehicles(dt);
     this.updatePedestrians(dt);
@@ -1743,6 +1824,7 @@ export class GameEngine {
     this.updatePoliceSearch(dt);
     this.updateTrafficLights(dt);
     this.updateNPCCrimes(dt);
+    this.updateCaptureState(dt);
     this.updateShops(dt);
     this.particles.update(dt);
     this.updateFloatingOrigin();
@@ -1750,6 +1832,13 @@ export class GameEngine {
   }
 
   private updatePlayer(dt: number) {
+    if (this.respawnTimer > 0) {
+      this.player.velocity.set(0, 0, 0);
+      this.wantsShoot = false;
+      this.aiming = false;
+      return;
+    }
+
     if (this.shopOpen) {
       // Player is in a shop — freeze movement
       this.player.mesh.visible = false;
@@ -1944,6 +2033,10 @@ export class GameEngine {
   }
 
   private doMelee() {
+    if (this.player.meleeAction) {
+      this.player.meleeAction.reset().setLoop(2200, 1).play();
+    }
+
     const nearby = this.pedestrianHash.query(this.player.position, WEAPONS.fists.range + 1.2);
     let hit = false;
 
@@ -2035,6 +2128,13 @@ export class GameEngine {
         vehicle.mesh.rotation.y = vehicle.direction;
       } else if (vehicle.routeIndex !== null && !vehicle.parked) {
         this.updateTrafficVehicle(vehicle, dt);
+      } else if (
+        vehicle.kind === "civilian" &&
+        vehicle.parked &&
+        vehicle.driverPedId &&
+        Math.random() < dt * 0.025
+      ) {
+        this.releaseParkedVehicleIntoTraffic(vehicle);
       }
 
       if (!vehicle.occupiedByPlayer) {
@@ -2057,6 +2157,84 @@ export class GameEngine {
       );
       extraPolice.slice(2).forEach((vehicle) => this.removeVehicle(vehicle));
     }
+
+    this.maintainAmbientTraffic();
+  }
+
+  private releaseParkedVehicleIntoTraffic(vehicle: VehicleEntity) {
+    const nearest = this.findNearestTrafficNode(vehicle.position);
+    if (!nearest) {
+      return;
+    }
+
+    vehicle.routeIndex = nearest.routeIndex;
+    vehicle.nodeIndex = nearest.nodeIndex;
+    vehicle.parked = false;
+    vehicle.speed = Math.max(vehicle.speed, 2.5);
+    vehicle.direction = this.directionBetween(
+      this.trafficRoutes[nearest.routeIndex][nearest.nodeIndex],
+      this.trafficRoutes[nearest.routeIndex][(nearest.nodeIndex + 1) % this.trafficRoutes[nearest.routeIndex].length]
+    );
+  }
+
+  private findNearestTrafficNode(position: Vector3): { routeIndex: number; nodeIndex: number; distanceSq: number } | null {
+    let best: { routeIndex: number; nodeIndex: number; distanceSq: number } | null = null;
+
+    this.trafficRoutes.forEach((route, routeIndex) => {
+      route.forEach((node, nodeIndex) => {
+        const distanceSq = node.distanceToSquared(position);
+        if (!best || distanceSq < best.distanceSq) {
+          best = { routeIndex, nodeIndex, distanceSq };
+        }
+      });
+    });
+
+    return best;
+  }
+
+  private maintainAmbientTraffic() {
+    const trafficTarget = Math.max(3, Math.round(GAME_CONFIG.trafficCount * this.currentTrafficDensity()));
+    const activeTraffic = this.vehicles.filter(
+      (vehicle) => vehicle.kind === "civilian" && !vehicle.occupiedByPlayer && !vehicle.parked
+    ).length;
+
+    if (activeTraffic >= trafficTarget || this.trafficSpawnCatalog.length === 0 || Math.random() > 0.18) {
+      return;
+    }
+
+    const angle = this.cameraYaw + Math.PI + (Math.random() - 0.5) * 1.4;
+    const spawnProbe = this.player.position.clone().add(
+      new Vector3(Math.sin(angle) * 72, 0, Math.cos(angle) * 72)
+    );
+
+    const spawn = [...this.trafficSpawnCatalog]
+      .sort((left, right) => {
+        const leftPos = this.trafficRoutes[left.routeIndex]?.[left.nodeIndex];
+        const rightPos = this.trafficRoutes[right.routeIndex]?.[right.nodeIndex];
+        return (leftPos?.distanceTo(spawnProbe) ?? Infinity) - (rightPos?.distanceTo(spawnProbe) ?? Infinity);
+      })
+      .find((candidate) => {
+        const position = this.trafficRoutes[candidate.routeIndex]?.[candidate.nodeIndex];
+        return position && !this.collidesWithBuildings(position) && position.distanceTo(this.player.position) > 45;
+      });
+
+    if (!spawn) {
+      return;
+    }
+
+    const route = this.trafficRoutes[spawn.routeIndex];
+    const position = route[spawn.nodeIndex].clone();
+    this.createVehicle({
+      id: this.nextId("traffic"),
+      position,
+      direction: this.directionBetween(position, route[(spawn.nodeIndex + 1) % route.length]),
+      kind: spawn.kind,
+      vehicleClass: spawn.vehicleClass,
+      routeIndex: spawn.routeIndex,
+      nodeIndex: spawn.nodeIndex,
+      parked: false,
+      withDriver: true
+    });
   }
 
   private moveVehicleWithCollision(vehicle: VehicleEntity, dt: number) {
@@ -2165,10 +2343,27 @@ export class GameEngine {
     const heading = playerVehicle ? playerVehicle.direction : this.playerYaw;
     const prediction = new Vector3(Math.sin(heading) * speedEstimate, 0, Math.cos(heading) * speedEstimate).multiplyScalar(1.2);
 
-    const targetPosition = this.player.position.clone().add(prediction);
+    let targetPosition = this.player.position.clone().add(prediction);
+    if (!this.playerVisibleToPolice && this.lastKnownPosition) {
+      if (this.policeSearchPhase === "rush_lkp") {
+        targetPosition = this.lastKnownPosition.clone();
+      } else if (this.policeSearchPhase === "grid_sweep" || this.policeSearchPhase === "checkpoint") {
+        const sweepAngle = (vehicle.sirenTimer * 0.7) + (vehicle.position.x + vehicle.position.z) * 0.02;
+        const sweepRadius = Math.min(this.policeSearchRadius || 18, POLICE_CONFIG.gridSweepRadius);
+        targetPosition = this.lastKnownPosition.clone().add(
+          new Vector3(Math.cos(sweepAngle) * sweepRadius, 0, Math.sin(sweepAngle) * sweepRadius)
+        );
+      }
+    }
+
     const desiredDir = this.directionBetween(vehicle.position, targetPosition);
     vehicle.direction = this.rotateTowards(vehicle.direction, desiredDir, dt * 2.8);
-    vehicle.speed = this.lerp(vehicle.speed, vehicle.maxSpeed + (this.player.wanted > 2 ? 6 : 3), dt * 2.5);
+    const searchSpeedFactor = POLICE_CONFIG.searchPhaseSpeeds[this.policeSearchPhase];
+    vehicle.speed = this.lerp(
+      vehicle.speed,
+      (vehicle.maxSpeed + (this.player.wanted > 2 ? 6 : 3)) * searchSpeedFactor,
+      dt * 2.5
+    );
 
     const obstacleFactor = this.trafficObstacleFactor(vehicle);
     if (obstacleFactor < 0.3) {
@@ -2458,6 +2653,8 @@ export class GameEngine {
             pedestrian.cooldown = 1.1;
             this.applyDamage(6);
           }
+        } else if (desiredState === "duck") {
+          pedestrian.mesh.scale.y = 0.68;
         } else if (desiredState === "daily_activity") {
           // NPC is doing a daily activity
           switch (pedestrian.dailyActivity) {
@@ -2540,7 +2737,12 @@ export class GameEngine {
           pedestrian.state = "pursue";
           pedestrian.pursuitTarget = "player";
           pedestrian.pursuitTargetId = null;
-          movePedestrianToward(pedestrian, this.player.position, pedestrian.speed * 1.1, dt);
+          const pursuitTarget =
+            !this.playerVisibleToPolice && this.lastKnownPosition
+              ? this.lastKnownPosition
+              : this.player.position;
+          const speedMultiplier = POLICE_CONFIG.searchPhaseSpeeds[this.policeSearchPhase] + 0.2;
+          movePedestrianToward(pedestrian, pursuitTarget, pedestrian.speed * speedMultiplier, dt);
 
           if (pedestrian.cooldown === 0 && pedestrian.position.distanceTo(this.player.position) < 18) {
             pedestrian.cooldown = 1.35;
@@ -2592,7 +2794,11 @@ export class GameEngine {
         const isRunning = pedestrian.state === "flee" || pedestrian.state === "pursue" || pedestrian.state === "attack" || pedestrian.state === "angry";
 
         let targetPedAction: AnimationAction | undefined;
-        if (moving && isRunning && pedestrian.runAction) {
+        if (pedestrian.state === "duck" && pedestrian.crouchAction) {
+          targetPedAction = pedestrian.crouchAction;
+        } else if (pedestrian.bloodTimer > 0.2 && pedestrian.hurtAction) {
+          targetPedAction = pedestrian.hurtAction;
+        } else if (moving && isRunning && pedestrian.runAction) {
           targetPedAction = pedestrian.runAction;
         } else if (moving && pedestrian.walkAction) {
           targetPedAction = pedestrian.walkAction;
@@ -2602,7 +2808,14 @@ export class GameEngine {
 
         // Stop all other actions before playing the target to prevent gliding
         if (targetPedAction) {
-          const allPedActions = [pedestrian.idleAction, pedestrian.walkAction, pedestrian.runAction, pedestrian.aimAction];
+          const allPedActions = [
+            pedestrian.idleAction,
+            pedestrian.walkAction,
+            pedestrian.runAction,
+            pedestrian.aimAction,
+            pedestrian.crouchAction,
+            pedestrian.hurtAction
+          ];
           for (const action of allPedActions) {
             if (action && action !== targetPedAction && action.isRunning()) {
               action.stop();
@@ -2852,6 +3065,7 @@ export class GameEngine {
 
   private updateWanted(dt: number) {
     if (this.player.wanted <= 0) {
+      this.bustedMeter = 0;
       return;
     }
 
@@ -2875,13 +3089,26 @@ export class GameEngine {
       return;
     }
 
+    if (
+      !this.playerVisibleToPolice &&
+      this.lastKnownPosition &&
+      this.player.position.distanceTo(this.lastKnownPosition) > Math.max(28, this.policeSearchRadius + 10)
+    ) {
+      this.player.wantedTimer = Math.min(this.player.wantedTimer, 6);
+    }
+
     this.player.wantedTimer = Math.max(0, this.player.wantedTimer - dt);
     if (this.player.wantedTimer === 0) {
       this.player.wanted = Math.max(0, this.player.wanted - 1);
       this.player.wantedTimer = this.player.wanted > 0 ? GAME_CONFIG.wantedDecaySeconds : 0;
 
       if (this.player.wanted === 0) {
-        this.notify("Wanted level cleared.", "success");
+        this.lastKnownPosition = null;
+        this.playerVisibleToPolice = true;
+        this.policeSearchPhase = "chase";
+        this.notify("You shook the police and cleared your wanted level.", "success");
+      } else {
+        this.notify("You widened the gap. The police lost one layer of heat.", "info");
       }
     }
   }
@@ -3472,9 +3699,110 @@ export class GameEngine {
     // Left empty: world boundaries are now physical walls, handled by collision
   }
 
+  private updateRespawnState(dt: number) {
+    if (this.respawnTimer <= 0) {
+      return;
+    }
+
+    this.respawnTimer = Math.max(0, this.respawnTimer - dt);
+    if (this.statusOverlay) {
+      this.statusOverlay = {
+        ...this.statusOverlay,
+        countdown: Math.max(1, Math.ceil(this.respawnTimer))
+      };
+    }
+
+    if (this.respawnTimer === 0) {
+      this.finalizeRespawn();
+    }
+  }
+
+  private updateCaptureState(dt: number) {
+    if (this.respawnTimer > 0 || this.player.inVehicle || this.player.wanted <= 0) {
+      this.bustedMeter = 0;
+      return;
+    }
+
+    const nearbyCops = this.pedestrians.filter(
+      (pedestrian) =>
+        pedestrian.role === "cop" &&
+        !pedestrian.inVehicleId &&
+        pedestrian.position.distanceTo(this.player.position) < 2.8
+    ).length;
+
+    if (nearbyCops >= 2 && this.player.velocity.length() < 1.2) {
+      this.bustedMeter += dt;
+      if (this.bustedMeter >= 1.8) {
+        this.triggerRespawn(
+          "Busted",
+          "The police boxed you in before you could break contact.",
+          "info"
+        );
+      }
+      return;
+    }
+
+    this.bustedMeter = Math.max(0, this.bustedMeter - dt * 2);
+  }
+
+  private triggerRespawn(title: string, message: string, tone: "danger" | "info") {
+    if (this.respawnTimer > 0) {
+      return;
+    }
+
+    this.pendingRespawn = { title, message, tone };
+    this.respawnTimer = 3.2;
+    this.statusOverlay = {
+      title,
+      message,
+      countdown: Math.ceil(this.respawnTimer)
+    };
+    this.player.wanted = 0;
+    this.player.wantedTimer = 0;
+    this.player.velocity.set(0, 0, 0);
+    this.aiming = false;
+    this.wantsShoot = false;
+    this.notify(message, tone);
+
+    if (this.player.inVehicle && this.player.vehicleId) {
+      const vehicle = this.vehicles.find((candidate) => candidate.id === this.player.vehicleId);
+      if (vehicle) {
+        vehicle.occupiedByPlayer = false;
+        vehicle.speed = 0;
+        vehicle.parked = true;
+      }
+    }
+
+    this.player.inVehicle = false;
+    this.player.vehicleId = null;
+    this.player.mesh.visible = true;
+  }
+
+  private finalizeRespawn() {
+    this.player.health = 100;
+    this.player.armor = 50;
+    this.player.position.set(0, PLAYER_HEIGHT, 0);
+    this.player.velocity.set(0, 0, 0);
+    this.player.onGround = true;
+    this.playerYaw = 0;
+    this.cameraYaw = 0;
+    this.bustedMeter = 0;
+    this.lastKnownPosition = null;
+    this.playerVisibleToPolice = true;
+    this.policeSearchPhase = "chase";
+    this.policeSearchTimer = 0;
+    this.policeSearchRadius = 0;
+    this.statusOverlay = null;
+    this.pendingRespawn = null;
+  }
+
   private applyDamage(amount: number) {
+    if (this.respawnTimer > 0) return;
     if (this.cheatBuffer.endsWith("aspirine")) return;
     this.triggerCameraShake(Math.min(0.6, amount * 0.02));
+    if (this.player.hurtAction) {
+      this.player.hurtAction.reset().setLoop(2200, 1).play();
+    }
 
     let remaining = amount;
 
@@ -3487,25 +3815,7 @@ export class GameEngine {
     this.player.health = Math.max(0, this.player.health - remaining);
 
     if (this.player.health <= 0) {
-      this.player.health = 100;
-      this.player.armor = 50;
-
-      this.player.position.set(0, PLAYER_HEIGHT, 0); // No more origin offset
-
-      this.player.wanted = 0;
-      this.player.wantedTimer = 0;
-
-      // Ensure the vehicle is marked as unoccupied
-      if (this.player.inVehicle && this.player.vehicleId) {
-        const vehicle = this.vehicles.find(v => v.id === this.player.vehicleId);
-        if (vehicle) {
-          vehicle.occupiedByPlayer = false;
-        }
-      }
-
-      this.player.inVehicle = false;
-      this.player.vehicleId = null;
-      this.notify("You got flattened. Respawned downtown.", "danger");
+      this.triggerRespawn("Wasted", "You got dropped hard. Catch your breath, then get back on the street.", "danger");
     }
   }
 
@@ -4024,7 +4334,9 @@ export class GameEngine {
       ? "Press Q to collect the nearby pickup."
       : this.player.inVehicle
         ? "Press F to exit the current vehicle."
-        : "Press F near a parked car or occupied ride to enter or hijack it.";
+        : this.player.wanted > 0 && !this.playerVisibleToPolice
+          ? "Break line of sight and put distance between you and the last police sighting to shake them."
+          : "Press F near a parked car or occupied ride to enter or hijack it.";
 
     const hours = Math.floor(this.worldTime * 24);
     const minutes = Math.floor((this.worldTime * 24 - hours) * 60);
@@ -4096,6 +4408,7 @@ export class GameEngine {
       inVehicle: this.player.inVehicle,
       isAiming: this.aiming && !this.paused,
       digitalFootprint: Math.round(this.player.digitalFootprint),
+      statusOverlay: this.statusOverlay,
       notification: this.notification,
       shopMenu: this.getShopMenuState(),
       interactionPrompt: this.getInteractionPrompt(),
